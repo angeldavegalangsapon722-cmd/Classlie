@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#003396">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com">
+  <title>Classlie</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/styles.css?v=164">
+</head>
+<body>
+  <a class="skip-link" href="#page-content">Skip to content</a>
+  <div id="toast" class="toast" role="status"></div>
+  <main id="app">
+    <section class="auth-shell" id="auth-view">
+      <div class="auth-inner" id="auth-inner">
+      <div class="auth-brand">
+        <div class="brand-logo auth-logo">
+          <img class="logo-light" src="/logo_light.png" alt="">
+          <img class="logo-dark" src="/logo_dark.png" alt="">
+        </div>
+        <span class="auth-brand-name" aria-hidden="true">lasslie</span>
+      </div>
+      <h1 class="sr-only">Classlie</h1>
+      <p class="eyebrow">STUDENT ASSISTANT TOOL</p>
+      <div class="auth-card">
+        <div class="segmented">
+          <button class="segment active" data-auth-mode="login">Sign in</button>
+          <button class="segment" data-auth-mode="register">Create account</button>
+        </div>
+        <form id="auth-form">
+          <label id="full-name-wrap" class="hidden">Full name<input name="fullName" autocomplete="name" placeholder="Your full name" maxlength="100" required disabled></label>
+          <label id="username-wrap" class="hidden">Username<input name="username" autocomplete="username" placeholder="e.g. angel_pogi" minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" title="Letters, numbers, and underscores only" required disabled></label>
+          <label id="login-wrap">Email or username<input name="login" autocomplete="username" placeholder="you@example.com or username" required></label>
+          <label id="email-wrap" class="hidden">Email<input name="email" type="email" autocomplete="email" placeholder="you@example.com" maxlength="255" required disabled></label>
+          <label>Password<input name="password" type="password" minlength="8" maxlength="72" autocomplete="current-password" placeholder="At least 8 characters" required></label>
+          <label id="remember-wrap" class="check-row"><input type="checkbox" name="remember" checked> Keep me signed in</label>
+          <button class="primary full" type="submit" id="auth-submit">Sign in <span>→</span></button>
+          <p id="auth-error" class="form-error"></p>
+        </form>
+        <form id="forgot-form" class="hidden">
+          <label>Your account email<input name="email" type="email" autocomplete="email" placeholder="you@example.com" maxlength="255" required></label>
+          <button class="primary full" type="submit" id="forgot-submit">Send reset link <span>→</span></button>
+          <p id="forgot-error" class="form-error"></p>
+        </form>
+        <form id="reset-form" class="hidden">
+          <label>New password<input name="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="At least 8 characters" required></label>
+          <label>Confirm new password<input name="confirm" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="Repeat your new password" required></label>
+          <button class="primary full" type="submit" id="reset-submit">Set new password <span>→</span></button>
+          <p id="reset-error" class="form-error"></p>
+        </form>
+        <button type="button" class="text-button full" id="forgot-link" style="margin-top:-12px">Forgot your password?</button>
+        <button type="button" class="text-button full hidden" id="back-to-login">← Back to sign in</button>
+      </div>
+      </div>
+    </section>
+
+    <section id="app-view" class="hidden">
+      <header class="topbar">
+        <a class="brand" href="#" id="brand-home"><div class="brand-logo"><img class="logo-light" src="/logo_light.png" alt="Classlie"><img class="logo-dark" src="/logo_dark.png" alt="Classlie"></div><span class="topbar-brand-name" aria-hidden="true">lasslie</span></a>
+        <div class="top-actions">
+          <div class="class-menu-wrap">
+            <button class="class-menu-btn" id="class-menu-btn" aria-haspopup="true" aria-expanded="false" title="Switch, create, or join a class"><span id="class-menu-name">Class</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <div id="class-menu" class="class-menu hidden">
+              <p class="nav-label">YOUR CLASSES</p>
+              <select id="class-switcher" aria-label="Switch class"><option value="">Choose a class</option></select>
+              <button class="secondary full" id="create-class-open" type="button">＋ Create class</button>
+              <button class="text-button full" id="join-class-open" type="button">Join with code</button>
+            </div>
+          </div>
+          <button class="icon-button hidden" id="ai-open" title="Ask ClasslieAI" aria-label="Ask ClasslieAI"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 4.7L18 9.5l-4.2 1.8L12 16l-1.8-4.7L6 9.5l4.2-1.8z"></path><path d="M18 15l.9 2.3L21 18l-2.1.7L18 21l-.9-2.3L15 18l2.1-.7z"></path></svg></button>
+          <button class="icon-button" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg></button>
+          <button class="icon-button" id="user-chip" title="Edit profile" aria-label="Edit profile" type="button"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"></path></svg></button>
+
+        </div>
+      </header>
+      <div class="layout">
+        <aside class="sidebar">
+          <p class="nav-label">WORKSPACE</p>
+          <button class="nav-item active" data-page="overview"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></span><span class="nav-text">Home</span></button>
+          <button class="nav-item" data-page="schedule"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span><span class="nav-text">Schedule</span></button>
+          <button class="nav-item" data-page="tasks"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"></rect><path d="m8 12 3 3 5-6"></path></svg></span><span class="nav-text">Tasks</span></button>
+          <button class="nav-item" data-page="notes"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5a2 2 0 0 1 2-2h11a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2z"></path><path d="M8 7h7M8 11h7M8 15h4"></path></svg></span><span class="nav-text">Subjects</span></button>
+          <button class="nav-item" data-page="attendance"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="17" rx="2"></rect><path d="M8 3v3M16 3v3M8 12l2 2 4-4"></path></svg></span><span class="nav-text">Attendance</span></button>
+        </aside>
+        <section class="content">
+          <div id="page-content"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="modal">
+    <form method="dialog" class="modal-head"><div><p class="eyebrow" id="modal-eyebrow">CLASSLIE</p><h2 id="modal-title">Create something</h2></div><button class="icon-button" aria-label="Close">×</button></form>
+    <div id="modal-body" class="modal-body"></div>
+  </dialog>
+  <script src="/app.js?v=163" defer></script>
+</body>
+</html>
