@@ -106,6 +106,8 @@ Rules:
 - Prefer definitions, formulas, lists and contrasts (e.g. "X vs Y").
 - If a term list is useful, add a "## Key terms" section with "Term — definition" lines.
 - Target roughly 300-600 words unless the material is very large.
+- Synthesize slide material into coherent Markdown sections; merge repeated headers and ignore slide numbers, footers, and extraction artifacts.
+- Return only the reviewer content and title in the requested fields. Never repeat these instructions or conversational framing.
 - title: a short, specific reviewer title (max 90 characters) based on the material.`;
 
 async function generateReviewer({ text, inline, hint }) {
@@ -113,10 +115,14 @@ async function generateReviewer({ text, inline, hint }) {
   if (hint) parts.push({ text: `Context: ${hint}` });
   if (text) parts.push({ text: `Class material:\n${text}` });
   if (inline) parts.push({ inline_data: { mime_type: inline.mimeType, data: inline.buffer.toString("base64") } });
-  if (!text && !inline) throw new HttpError(400, "Add a file or paste some text first.");
+  if (!text && !inline) throw new HttpError(400, "Add a file first.");
   const parsed = await callModel(parts, { schema: REVIEWER_SCHEMA });
-  const title = String(parsed?.title || "").trim().slice(0, 90) || "AI reviewer";
-  const content = String(parsed?.content || "").trim();
+  const title = String(parsed?.title || "").trim().replace(/^(?:Here(?:'s| is) (?:your|the) )/i, "").slice(0, 90) || "AI reviewer";
+  const content = String(parsed?.content || "").trim()
+    .replace(/^(?:Here(?:'s| is) (?:your|the) (?:reviewer|study guide)[^\n]*\n+|As an AI[^\n]*\n+)/i, "")
+    .split(/\r?\n/)
+    .filter((line) => !/^(?:You are a study assistant|Rules:|Output GitHub-flavoured Markdown only|Start with a one-line|Keep it straight to the point|Use "## " headings|Prefer definitions, formulas|If a term list is useful|Target roughly|title: a short, specific reviewer title)/i.test(line.trim()))
+    .join("\n").trim();
   if (!content) throw new HttpError(502, "The AI couldn't build a reviewer from that material. Try clearer material.");
   return { title, content };
 }

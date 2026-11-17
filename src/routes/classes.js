@@ -115,14 +115,15 @@ router.patch("/:classId", requireClassMember, async (req, res, next) => {
 router.get("/:classId/members", requireClassMember, async (req, res, next) => {
   try {
     const result = await req.app.locals.db.query(
-      `SELECT u.id,u.full_name,u.username,u.email,u.avatar_url,cm.role,cm.joined_at
+      `SELECT u.id,u.full_name,u.username,u.email,u.avatar_url,u.active_status,cm.role,cm.joined_at
        FROM class_members cm JOIN users u ON u.id=cm.user_id
        WHERE cm.class_id=$1 ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.full_name`,
       [req.params.classId]
     );
     // Email addresses are only for people who manage the class.
     const canSeeEmail = ["owner", "admin"].includes(req.membership.role);
-    res.json({ members: result.rows.map(({ email, ...m }) => (canSeeEmail ? { ...m, email } : m)) });
+    const viewerActive = (await req.app.locals.db.query("SELECT active_status FROM users WHERE id=$1", [req.user.id])).rows[0]?.active_status !== false;
+    res.json({ members: result.rows.map(({ email, active_status, ...m }) => ({ ...m, active: viewerActive && active_status !== false, ...(canSeeEmail ? { email } : {}) })) });
   } catch (error) { next(error); }
 });
 

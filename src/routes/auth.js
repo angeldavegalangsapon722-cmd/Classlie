@@ -7,6 +7,7 @@ const { requireAuth } = require("../middleware/auth");
 const { badRequest, HttpError } = require("../middleware/errors");
 const { cleanText } = require("../middleware/validate");
 const { sendMail } = require("../mailer");
+const { logActiveStatus } = require("../activity");
 
 const MAX_AVATAR_BYTES = 1024 * 1024; // 1 MB, stored inline as a data URL
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_AVATAR_BYTES, files: 1 } });
@@ -25,7 +26,7 @@ function makeToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: "7d", algorithm: "HS256" });
 }
 function publicUser(user) {
-  return { id: user.id, fullName: user.full_name, username: user.username, email: user.email, avatarUrl: user.avatar_url };
+  return { id: user.id, fullName: user.full_name, username: user.username, email: user.email, avatarUrl: user.avatar_url, activeStatus: user.active_status !== false };
 }
 function checkPassword(password, label = "Password") {
   if (typeof password !== "string" || password.length < 8) throw badRequest(`${label} must be at least 8 characters.`);
@@ -78,7 +79,7 @@ router.post("/login", async (req, res, next) => {
 router.get("/me", requireAuth, async (req, res, next) => {
   try {
     const result = await req.app.locals.db.query(
-      "SELECT id, full_name, username, email, avatar_url FROM users WHERE id=$1", [req.user.id]
+      "SELECT id, full_name, username, email, avatar_url, active_status FROM users WHERE id=$1", [req.user.id]
     );
     if (!result.rows[0]) return res.status(401).json({ error: "This account no longer exists. Please sign in again." });
     res.json({ user: publicUser(result.rows[0]) });
@@ -99,6 +100,14 @@ router.patch("/me", requireAuth, async (req, res, next) => {
       checkUsername(username);
       params.push(username);
       sets.push(`username=$${params.length}`);
+    }
+    if (body.activeStatus !== undefined) {
+      if (typeof body.activeStatus !== "boolean") throw badRequest("Active Status must be on or off.");
+      await logActiveStatus(req.app.locals.db, { userId: req.user.id, active: body.activeStatus });
+      if (body.fullName === undefined && body.username === undefined) {
+        const updated = await req.app.locals.db.query("SELECT * FROM users WHERE id=$1", [req.user.id]);
+        return res.json({ user: publicUser(updated.rows[0]), token: makeToken(updated.rows[0]) });
+      }
     }
     if (!sets.length) throw badRequest("Nothing to update.");
     params.push(req.user.id);

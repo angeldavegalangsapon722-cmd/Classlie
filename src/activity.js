@@ -10,4 +10,8 @@ async function logActivity(db, { classId, userId, action, entityType, entityId =
   }
 }
 
-module.exports = { logActivity };
+async function logActiveStatus(db, { userId, active }) {
+  await db.query("UPDATE users SET active_status=$1 WHERE id=$2", [active, userId]);
+}
+
+module.exports = { logActivity, logActiveStatus };

@@ -657,6 +657,16 @@ function modalForm({ title, eyebrow, html, submitLabel = "Save", onSubmit, onDel
   openModal(title, eyebrow || "CLASSLIE", `<form id="dynamic-form">${html}<p class="form-error" id="modal-error" role="alert"></p>
     <div class="modal-actions">${onDelete ? `<button type="button" class="danger-button" id="modal-delete">${deleteLabel}</button>` : ""}<button type="button" class="secondary" id="modal-cancel">Cancel</button><button class="primary" type="submit">${submitLabel}</button></div></form>`);
   const form = $("#dynamic-form");
+  const reviewerContent = $("textarea[name=content]", form);
+  const wordCount = $(`[data-word-count]`, form);
+  if (reviewerContent && wordCount) {
+    const updateWordCount = () => {
+      const words = reviewerContent.value.trim().split(/\s+/).filter(Boolean).length;
+      wordCount.textContent = `${words} words · ${reviewerContent.value.length.toLocaleString()} / 20,000 characters`;
+    };
+    reviewerContent.addEventListener("input", updateWordCount);
+    updateWordCount();
+  }
   const finish = async (next) => {
     closeModal();
     try { await (typeof next === "function" ? next() : renderPage()); } catch (error) { toast(error.message); }
@@ -790,6 +800,8 @@ async function openProfile() {
         </div>
       </details>
       <div class="profile-push"><span>Push notifications</span><label class="push-row"><input type="checkbox" id="push-toggle"> Enable</label></div>
+      <div class="profile-push"><span>Active Status</span><label class="push-row"><input type="checkbox" name="activeStatus" ${u.activeStatus !== false ? "checked" : ""}> On</label></div>
+      ${u.activeStatus === false ? '<p class="hint">Active Status is off. Other class members cannot see your status, and you cannot see theirs.</p>' : ''}
       <p class="hint" id="push-status">Classlie can notify you shortly before class and when your tasks become overdue.</p>
       <p class="form-error" id="profile-error"></p>
       <div class="modal-actions"><button type="button" class="danger-button" id="profile-logout">Sign out</button><button type="button" class="secondary" id="profile-close">Cancel</button><button class="primary" type="submit">Save</button></div></form>`);
@@ -805,6 +817,8 @@ async function openProfile() {
       const body = {};
       if (d.fullName.trim() !== u.fullName) body.fullName = d.fullName;
       if (d.username.trim() !== u.username) body.username = d.username;
+      const activeStatus = form.querySelector('[name="activeStatus"]').checked;
+      if (activeStatus !== (u.activeStatus !== false)) body.activeStatus = activeStatus;
       if (d.newPassword && !d.currentPassword) throw new Error("Enter your current password to set a new one.");
       if (Object.keys(body).length) {
         const r = await api("/auth/me", { method: "PATCH", body });
@@ -1259,6 +1273,20 @@ async function openSubject(subjectId, tab = "reviewers") {
     ${tabs}
     <div id="subject-panel">${isQuizzes ? quizzesPanel : isTasks ? tasksPanel : reviewersPanel}</div>`);
   const body = $("#modal-body");
+  let swipeStart = null;
+  body.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button,a,input,textarea,select")) { swipeStart = null; return; }
+    swipeStart = { x: event.clientX, y: event.clientY };
+  }, { passive: true });
+  body.addEventListener("pointerup", (event) => {
+    if (!swipeStart) return;
+    const dx = event.clientX - swipeStart.x, dy = event.clientY - swipeStart.y;
+    swipeStart = null;
+    if (Math.abs(dx) <= 50 || Math.abs(dx) <= Math.abs(dy) * 1.3) return;
+    const tabs = ["reviewers", "quizzes", "tasks"];
+    const next = tabs[Math.max(0, Math.min(tabs.length - 1, tabs.indexOf(tab) + (dx < 0 ? 1 : -1)))];
+    if (next !== tab) openSubject(subjectId, next);
+  }, { passive: true });
   const again = () => openSubject(subjectId, tab);
   $$("[data-subject-tab]", body).forEach((b) => b.addEventListener("click", () => { if (b.dataset.subjectTab !== tab) openSubject(subjectId, b.dataset.subjectTab); }));
   if (isQuizzes) {
@@ -1336,7 +1364,7 @@ function openReviewerForm(subjectId, subjectName) {
     eyebrow: subjectName ? subjectName.toUpperCase() : "REVIEWER",
     submitLabel: "Save reviewer",
     html: `${field("Title", "title", "e.g. Key concepts", "text", "", 'required maxlength="180"')}
-      <label>Content<textarea name="content" maxlength="20000" placeholder="Write or paste your reviewer…"></textarea></label>
+      <label>Content<textarea name="content" maxlength="20000" placeholder="Write or paste your reviewer…"></textarea><small class="word-count" data-word-count></small></label>
       <p class="hint">Formatting: **bold**, *italic*, \`code\`, # heading, - bullet list, [text](https://link).</p>`,
     onSubmit: async (d) => {
       if (isAdmin()) {
@@ -1358,7 +1386,7 @@ function openNoteEditor(note, subjectId, subjectName) {
     eyebrow: subjectName ? subjectName.toUpperCase() : "REVIEWER",
     submitLabel: "Save changes",
     html: `${field("Title", "title", "", "text", note.title, 'required maxlength="180"')}
-      <label>Content<textarea name="content" maxlength="20000">${escapeHtml(note.content || "")}</textarea></label>
+      <label>Content<textarea name="content" maxlength="20000">${escapeHtml(note.content || "")}</textarea><small class="word-count" data-word-count></small></label>
       <p class="hint">Formatting: **bold**, *italic*, \`code\`, # heading, - bullet list, [text](https://link).</p>`,
     onSubmit: async (d) => {
       await api(`/class-data/${cid()}/notes/${note.id}`, { method: "PATCH", body: d });
@@ -1388,11 +1416,10 @@ async function openReviewerGenerator(prefill = {}) {
     return;
   }
   openWideModal("AI reviewer", "AI NOTES", `
-    <p class="muted">Upload a PowerPoint, PDF, image or text file — or paste text — and AI drafts a compact reviewer. It is saved straight into the subject you pick.</p>
+    <p class="muted">Upload a PowerPoint, PDF, image or text file and AI drafts a compact reviewer. It is saved straight into the subject you pick.</p>
     <div class="ai-form">
       <label>Save under subject<select id="rv-subject">${aiSubjectOptions(subjects, prefill.subjectId)}</select></label>
       <label>Source file<small class="muted block">PPTX, PDF, PNG/JPG, TXT/MD · up to 10 MB</small><input type="file" id="rv-file" accept=".pptx,.pdf,.txt,.md,.markdown,.csv,image/*"></label>
-      <label>…or paste the material<textarea id="rv-text" maxlength="120000" placeholder="Paste notes, a transcript, or key points…"></textarea></label>
       <p class="form-error" id="rv-error"></p>
       <div class="modal-actions"><button type="button" class="secondary" id="rv-cancel">Cancel</button><button type="button" class="primary" id="rv-go">✦ Generate reviewer</button></div>
     </div>`);
@@ -1400,15 +1427,13 @@ async function openReviewerGenerator(prefill = {}) {
   $("#rv-cancel").onclick = () => { closeModal(); if (prefill.subjectId) openSubject(prefill.subjectId).catch(() => {}); };
   $("#rv-go").onclick = async () => {
     const file = $("#rv-file").files[0];
-    const text = $("#rv-text").value.trim();
     if (!subjectSel.value) return ($("#rv-error").textContent = "Pick a subject to save the reviewer under.");
-    if (!file && !text) return ($("#rv-error").textContent = "Add a file or paste some text first.");
+    if (!file) return ($("#rv-error").textContent = "Choose a file first.");
     const button = $("#rv-go"); button.disabled = true; const label = button.textContent; button.textContent = "✦ Generating…";
     $("#rv-error").textContent = "";
     try {
       const form = new FormData();
       if (file) form.append("file", file);
-      if (text) form.append("text", text);
       form.append("subject_id", subjectSel.value);
       const subjectName = subjects.find((s) => s.id === subjectSel.value)?.name;
       const { reviewer, source } = await apiForm(`/ai/${cid()}/reviewers/generate`, form);
@@ -1461,7 +1486,7 @@ async function openQuizBuilder(prefill = {}) {
     const preselected = new Set(prefill.reviewerIds || []);
     const html = tree.map(({ subject, reviewers }) => `<section class="reviewer-tree-folder" data-folder="${subject.id}">
       <div class="folder-row"><button type="button" data-folder-toggle="${subject.id}" aria-expanded="false" aria-label="Expand ${escapeHtml(subject.name)}">▸</button><span aria-hidden="true">📁</span><input type="checkbox" data-folder-check="${subject.id}" ${reviewers.length ? "" : "disabled"}><span class="topic-name">${escapeHtml(subject.name)}</span></div>
-      <div class="reviewer-tree-children" data-folder-children="${subject.id}" hidden>${reviewers.map((reviewer) => `<label class="reviewer-tree-row"><input type="checkbox" data-reviewer-check value="${reviewer.id}" data-subject="${subject.id}" ${!preselected.size || preselected.has(reviewer.id) ? "checked" : ""}><span>${escapeHtml(reviewer.title)}</span></label>`).join("") || '<p class="muted">No reviewers in this subject.</p>'}</div>
+      <div class="reviewer-tree-children" data-folder-children="${subject.id}" hidden>${reviewers.map((reviewer) => `<label class="reviewer-tree-row"><input type="checkbox" data-reviewer-check value="${reviewer.id}" data-subject="${subject.id}" ${preselected.has(reviewer.id) ? "checked" : ""}><span>${escapeHtml(reviewer.title)}</span></label>`).join("") || '<p class="muted">No reviewers in this subject.</p>'}</div>
     </section>`).join("");
     openWideModal("Build a Quiz", "REVIEWERS", `<p class="muted">Choose the reviewers to include in your quiz.</p><div class="inline-actions reviewer-tree-tools"><button type="button" class="small-link" id="reviewers-select-all">Select all</button><button type="button" class="small-link" id="reviewers-deselect-all">Deselect all</button></div>
       <div class="folder-tree" id="reviewer-tree">${html || emptyState("No subjects yet", "Create a subject and add reviewers first.")}</div>
@@ -1796,9 +1821,9 @@ async function showMembers() {
     const others = me !== m.id && m.role !== "owner";
     const ownerActions = isOwner() && me === m.id && members.some((member) => member.id !== me) ? `<button class="small-link owner-transfer" data-open-transfer>Transfer ownership</button>` : "";
     return `<tr><td>${avatarHtml({ fullName: m.full_name || m.username, username: m.username, avatar_url: m.avatar_url }, "avatar-sm")}${escapeHtml(m.full_name)}${me === m.id ? " (you)" : ""}<br><small>@${escapeHtml(m.username)}</small></td><td><span class="pill">${escapeHtml(m.role)}</span></td>
-      <td><div class="member-actions">${ownerActions}${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
+      <td><span class="member-active ${m.active ? "is-active" : ""}">${m.active ? "● Active" : "Status hidden"}</span><div class="member-actions">${ownerActions}${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
   }).join("");
-  openModal("Class members", "CLASS SETTINGS", `<div class="table-wrap"><table class="members-table"><thead><tr><th>Member</th><th>Role</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  openModal("Class members", "CLASS SETTINGS", `${state.user.activeStatus === false ? '<p class="callout">Active Status is turned off. You cannot see other members’ active status indicators.</p>' : ""}<div class="table-wrap"><table class="members-table"><thead><tr><th>Member</th><th>Role</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   $$("[data-member-role]").forEach((b) => b.onclick = async () => {
     try { await api(`/classes/${cid()}/members/${b.dataset.memberRole}/role`, { method: "PATCH", body: { role: b.dataset.role } }); toast("Role updated."); await showMembers(); } catch (e) { toast(e.message); }
   });
@@ -1929,7 +1954,11 @@ function syncSelectionBar() {
       toast(`Deleted ${count} item${count === 1 ? "" : "s"}.`); await renderPage();
     } catch (error) { toast(error.message); }
   };
-  $("#selection-cancel").onclick = () => { state.selected = { subjects: [], tasks: [] }; state.selectionActive = false; renderPage(); };
+  $("#selection-cancel").onclick = () => {
+    state.selected = { subjects: [], tasks: [] }; state.selectionActive = false;
+    $$(".is-selected").forEach((item) => item.classList.remove("is-selected"));
+    bar.classList.remove("visible"); bar.setAttribute("aria-hidden", "true");
+  };
 }
 function cancelSelectionHold() { clearTimeout(selectionHoldTimer); selectionHoldTimer = null; selectionHoldTarget = null; selectionHoldStart = null; }
 function toggleSelectedItem(element) {

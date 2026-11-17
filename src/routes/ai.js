@@ -71,7 +71,6 @@ async function notesForTopics(db, topicIds) {
 // the client shows an editable preview and calls /reviewers/save once happy.
 router.post("/:classId/reviewers/generate", requireClassMember, upload.single("file"), async (req, res, next) => {
   try {
-    const text = cleanText(req.body?.text, "Text", 120000);
     const hint = cleanText(req.body?.title_hint, "Title", 160);
     let source = null;
     let extracted = {};
@@ -79,8 +78,8 @@ router.post("/:classId/reviewers/generate", requireClassMember, upload.single("f
       extracted = extractDocument({ buffer: req.file.buffer, mimetype: req.file.mimetype, filename: req.file.originalname });
       source = { fileName: req.file.originalname, bytes: req.file.size, kind: extracted.text ? "text" : "document" };
     }
-    if (!extracted.text && !extracted.inline && !text) throw badRequest("Add a file or paste some text first.");
-    const reviewer = await generateReviewer({ text: [extracted.text, text].filter(Boolean).join("\n\n") || null, inline: extracted.inline, hint });
+    if (!req.file) throw badRequest("Add a file first.");
+    const reviewer = await generateReviewer({ text: extracted.text || null, inline: extracted.inline, hint });
     if (source && extracted.text) source.chars = extracted.text.length;
     res.json({ reviewer, source });
   } catch (error) { next(error); }

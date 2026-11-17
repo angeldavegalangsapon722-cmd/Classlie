@@ -92,12 +92,13 @@ function extractPptx(buf) {
     .filter(Boolean)
     .sort((a, b) => a.n - b.n);
   if (!wanted.length) throw new HttpError(400, "That PowerPoint file has no slides to read.");
-  const slides = wanted.map(({ entry, n }, i) => {
+  const slides = wanted.map(({ entry, n }) => {
     const xml = readZipEntry(buf, entry);
     const text = xml ? textFromSlideXml(xml.toString("utf8")) : "";
-    return text ? `Slide ${i + 1}: ${text}` : "";
+    const cleaned = text.replace(/^(?:slide\s*)?\d+\s+/i, "").replace(/\bslide\s+\d+(?:\s+of\s+\d+)?\b/gi, "").replace(/\b\d+\s*\/\s*\d+\s*$/, "").replace(/\s+/g, " ").trim();
+    return cleaned ? `--- Slide ${n} ---\n${cleaned}` : "";
   }).filter(Boolean);
-  return slides.join("\n");
+  return slides.join("\n\n");
 }
 
 /* ---------------- public API ---------------- */
