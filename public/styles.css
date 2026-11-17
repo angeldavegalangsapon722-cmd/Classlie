@@ -294,7 +294,7 @@ dialog:has(.scan-table){width:min(1000px,calc(100% - 28px))}
 [data-theme="dark"] .subject-card{background:linear-gradient(135deg,color-mix(in srgb,var(--subject-accent,#6568e8) 18%,#1b1f32),#1b1f32 82%)}
 [data-theme="dark"] .subject-open{background:transparent}
 
-/* ---- AI study tools: breadcrumb, reviewer/quiz dialogs, quizzes, flashcards ---- */
+/* ---- AI study tools: breadcrumb, reviewer and quiz dialogs ---- */
 .crumb{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 14px;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .crumb-part:last-child{color:var(--purple)}
 .crumb-sep{color:#c3c6de}
@@ -380,8 +380,6 @@ dialog.wide{width:min(760px,calc(100% - 28px))}
 .grade-hard{background:#ed9c47}
 .grade-good{background:#6568e8}
 .grade-easy{background:#2da88a}
-.due-pill{background:#fff0f2;color:var(--red);font-weight:700}
-[data-theme="dark"] .due-pill{background:#3a2230;color:#ff8ba0}
 [data-theme="dark"] .fc-face{background:#232842}
 [data-theme="dark"] .fc-back{background:#2b3052}
 
@@ -811,7 +809,6 @@ button.is-loading,button:disabled{cursor:wait;opacity:.65}
 .subject-title{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;flex:1}
 .subject-name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:normal;overflow-wrap:normal}
 .subject-dot{flex:0 0 10px;margin-right:0}
-.subject-open .due-pill{flex:0 0 auto}
 .cal-indicators .cal-more{display:inline;flex:0 0 auto}
 .cal-day[data-cal-day]{cursor:pointer}
 .schedule-chip strong,.agenda-info h5{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:normal;overflow-wrap:normal}
@@ -1064,3 +1061,5 @@ button.is-loading,button:disabled{cursor:wait;opacity:.65}
     margin-top: 17px;
   }
 }
+
+.select-item{width:20px;height:20px;flex:0 0 auto;accent-color:var(--purple)}

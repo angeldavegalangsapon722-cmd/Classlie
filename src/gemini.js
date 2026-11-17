@@ -180,46 +180,6 @@ function normalizeQuestions(raw) {
   }).filter(Boolean).slice(0, 30);
 }
 
-/* ---------------- flashcards ---------------- */
-
-const FLASHCARD_SCHEMA = {
-  type: "object",
-  properties: {
-    cards: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { front: { type: "string" }, back: { type: "string" } },
-        required: ["front", "back"]
-      }
-    }
-  },
-  required: ["cards"]
-};
-
-const FLASHCARD_INSTRUCTIONS = `You create flashcards for active recall from a student's reviewer notes.
-Rules:
-- Each card has a short prompt ("front") and a concise answer ("back").
-- One idea per card; prefer key terms, definitions, formulas and "why" questions.
-- Plain text only (no LaTeX, no markdown).`;
-
-async function generateFlashcards({ notes, count = 12 }) {
-  const context = notes.map((n) => `### ${n.title}\n${n.content}`).join("\n\n").slice(0, 120000);
-  if (!context.trim()) throw new HttpError(400, "That topic has no reviewers to build flashcards from.");
-  const parts = [
-    { text: FLASHCARD_INSTRUCTIONS },
-    { text: `Create up to ${count} cards.` },
-    { text: `Reviewer material:\n${context}` }
-  ];
-  const parsed = await callModel(parts, { schema: FLASHCARD_SCHEMA, temperature: 0.4 });
-  const cards = (Array.isArray(parsed?.cards) ? parsed.cards : [])
-    .map((c) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 600) }))
-    .filter((c) => c.front && c.back)
-    .slice(0, 40);
-  if (!cards.length) throw new HttpError(502, "The AI couldn't build flashcards from that topic.");
-  return cards;
-}
-
 /* ---------------- study planner ---------------- */
 
 const STUDY_PLAN_SCHEMA = {
@@ -291,14 +251,15 @@ const ASSISTANT_SCHEMA = {
 };
 
 const ASSISTANT_INSTRUCTIONS = `You are ClasslieAI, a friendly study assistant inside a student's classroom app.
-You are given a snapshot of the student's class: tasks, schedule, subjects and reviewers.
+You are given a complete snapshot of the active class: attendance and absences, regular and temporary schedules, tasks, events, subjects, topics and reviewer contents. It includes the requesting user’s attendance details and, for owners/admins, overall class attendance statistics.
 Rules:
 - The snapshot starts with "Now:" (the student's local date/time and timezone), "Currently in class" when a class is in progress, and "Upcoming classes" for the next 7 days. Use these for questions like "what's next?", "next subject?", or "anong susunod?" — never say you don't know the current time or day when it is in the snapshot.
 - Trust the "Now:" line even if an earlier chat message claims you don't know the time or day; older messages may predate the current snapshot.
+- Answer questions about attendance, absence and late dates, subjects, schedules, events, tasks, topics and reviewer contents directly from the snapshot.
 - Answer ONLY from the class snapshot provided. If something isn't there, say so plainly — never invent tasks, dates, grades or people.
 - You are read-only: you cannot create, edit or delete anything. If the student asks you to, explain how they can do it themselves in the app.
 - Be concise and practical. Use short Markdown (bold, bullet lists) when it helps.
-- You may explain concepts, summarise reviewers, suggest a study order, or write flashcards/draft text for the student to copy.
+- You may explain concepts, summarise reviewers, suggest a study order, or draft text for the student to copy.
 - Return your reply in "answer" as Markdown.`;
 
 async function askClasslie({ question, history, context }) {
@@ -314,4 +275,4 @@ async function askClasslie({ question, history, context }) {
   return answer;
 }
 
-module.exports = { scanSchedule, generateReviewer, generateQuiz, generateFlashcards, generateStudyPlan, askClasslie, normalizeQuestions };
+module.exports = { scanSchedule, generateReviewer, generateQuiz, generateStudyPlan, askClasslie, normalizeQuestions };

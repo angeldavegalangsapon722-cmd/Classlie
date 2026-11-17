@@ -208,6 +208,39 @@ async function recordContentEvent(db, req, action, item) {
 }
 
 // ---- generic list / create / update / delete for subjects, schedules and tasks ----
+router.get("/:classId/temporary-schedules", requireClassMember, async (req, res, next) => {
+  try {
+    const { rows } = await req.app.locals.db.query(
+      `SELECT ts.*, COALESCE(json_agg(json_build_object('id',e.id,'title',e.title,'subject',e.subject,'entry_date',e.entry_date,'start_time',e.start_time,'end_time',e.end_time,'room',e.room) ORDER BY e.entry_date,e.start_time) FILTER (WHERE e.id IS NOT NULL),'[]') AS entries
+       FROM temporary_schedules ts LEFT JOIN temporary_schedule_entries e ON e.schedule_id=ts.id
+       WHERE ts.class_id=$1 AND ts.end_date >= CURRENT_DATE GROUP BY ts.id ORDER BY ts.start_date`, [req.params.classId]);
+    res.json({ temporary_schedules: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/:classId/temporary-schedules", requireClassAdmin, async (req, res, next) => {
+  const db = req.app.locals.db;
+  let client;
+  try {
+    client = await db.connect();
+    const title = cleanText(req.body?.title, "Title", 120, { required: true });
+    const startDate = String(req.body?.start_date || ""); const endDate = String(req.body?.end_date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || endDate < startDate) throw badRequest("Enter a valid schedule date range.");
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!entries.length || entries.length > 200) throw badRequest("Add between 1 and 200 schedule entries.");
+    await client.query("BEGIN");
+    const made = await client.query("INSERT INTO temporary_schedules(class_id,title,start_date,end_date,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *", [req.params.classId,title,startDate,endDate,req.user.id]);
+    for (const e of entries) {
+      const entryTitle = cleanText(e.title, "Entry title", 160, { required: true });
+      const date = String(e.entry_date || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < startDate || date > endDate || !TIME_RE.test(String(e.start_time || "")) || !TIME_RE.test(String(e.end_time || "")) || e.end_time <= e.start_time) throw badRequest("Each entry needs a valid date and time within the schedule range.");
+      await client.query("INSERT INTO temporary_schedule_entries(schedule_id,title,subject,entry_date,start_time,end_time,room) VALUES($1,$2,$3,$4,$5,$6,$7)", [made.rows[0].id,entryTitle,cleanText(e.subject,"Subject",120) || null,date,e.start_time,e.end_time,cleanText(e.room,"Room",100) || null]);
+    }
+    await client.query("COMMIT"); res.status(201).json({ schedule: made.rows[0] });
+  } catch (error) { if (client) await client.query("ROLLBACK").catch(() => {}); next(error); }
+  finally { client?.release(); }
+});
+
 router.get("/:classId/:resource(subjects|schedules|tasks)", requireClassMember, async (req, res, next) => {
   try {
     const cfg = resourceFor(req, res); if (!cfg) return;
@@ -300,6 +333,20 @@ router.delete("/:classId/:resource(subjects|schedules|tasks)/:id", requireClassA
     if (!result.rows[0]) return res.status(404).json({ error: "Item not found." });
     await recordContentEvent(req.app.locals.db, req, "delete", result.rows[0]);
     res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+router.post("/:classId/:resource(subjects|tasks)/bulk-delete", requireClassAdmin, async (req, res, next) => {
+  try {
+    const cfg = resourceFor(req, res); if (!cfg) return;
+    const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.filter(isUuid))].slice(0, 200) : [];
+    if (!ids.length) throw badRequest("Select at least one item to delete.");
+    const privateGuard = cfg.table === "tasks" ? " AND is_private=FALSE" : "";
+    const result = await req.app.locals.db.query(
+      `DELETE FROM ${cfg.table} WHERE class_id=$1 AND id=ANY($2::uuid[])${privateGuard} RETURNING id`,
+      [req.params.classId, ids]
+    );
+    res.json({ ok: true, deleted: result.rowCount });
   } catch (error) { next(error); }
 });
 

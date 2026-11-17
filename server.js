@@ -14,6 +14,19 @@ const app = createApp(pool);
 const port = Number(process.env.PORT || 3000);
 let server;
 pool.query("ALTER TABLE class_members ADD COLUMN IF NOT EXISTS special_key TEXT")
+  .then(() => pool.query(`CREATE TABLE IF NOT EXISTS temporary_schedules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    title VARCHAR(120) NOT NULL, start_date DATE NOT NULL, end_date DATE NOT NULL,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (end_date >= start_date)
+  )`))
+  .then(() => pool.query(`CREATE TABLE IF NOT EXISTS temporary_schedule_entries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), schedule_id UUID NOT NULL REFERENCES temporary_schedules(id) ON DELETE CASCADE,
+    title VARCHAR(160) NOT NULL, subject VARCHAR(120), entry_date DATE NOT NULL, start_time TIME NOT NULL,
+    end_time TIME NOT NULL, room VARCHAR(100), CHECK (end_time > start_time)
+  )`))
+  .then(() => pool.query("CREATE INDEX IF NOT EXISTS idx_temporary_schedules_class_dates ON temporary_schedules(class_id, start_date, end_date)"))
+  .then(() => pool.query("CREATE INDEX IF NOT EXISTS idx_temporary_schedule_entries_date ON temporary_schedule_entries(schedule_id, entry_date, start_time)"))
   .then(() => pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_class_members_special_key ON class_members(class_id, special_key) WHERE special_key IS NOT NULL"))
   .then(() => pool.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

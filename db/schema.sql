@@ -56,6 +56,30 @@ CREATE TABLE IF NOT EXISTS schedules (
   CHECK (end_time > start_time)
 );
 
+CREATE TABLE IF NOT EXISTS temporary_schedules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  title VARCHAR(120) NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (end_date >= start_date)
+);
+CREATE TABLE IF NOT EXISTS temporary_schedule_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schedule_id UUID NOT NULL REFERENCES temporary_schedules(id) ON DELETE CASCADE,
+  title VARCHAR(160) NOT NULL,
+  subject VARCHAR(120),
+  entry_date DATE NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  room VARCHAR(100),
+  CHECK (end_time > start_time)
+);
+CREATE INDEX IF NOT EXISTS idx_temporary_schedules_class_dates ON temporary_schedules(class_id, start_date, end_date);
+CREATE INDEX IF NOT EXISTS idx_temporary_schedule_entries_date ON temporary_schedule_entries(schedule_id, entry_date, start_time);
+
 CREATE TABLE IF NOT EXISTS tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
@@ -251,48 +275,7 @@ CREATE TABLE IF NOT EXISTS quiz_question_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_quiz_question_reviews_due ON quiz_question_reviews(user_id, due_at);
 
--- Flashcards are generated per subject and kept, so they can be studied with spaced repetition.
--- front_hash de-duplicates a card when the deck is regenerated for the same subject.
-CREATE TABLE IF NOT EXISTS flashcards (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-  subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
-  front TEXT NOT NULL,
-  back TEXT NOT NULL,
-  front_hash TEXT NOT NULL,
-  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_flashcards_subject_hash ON flashcards(subject_id, front_hash);
-CREATE INDEX IF NOT EXISTS idx_flashcards_subject ON flashcards(subject_id);
-CREATE INDEX IF NOT EXISTS idx_flashcards_class ON flashcards(class_id);
-
--- Per-user spaced-repetition state (a simplified SM-2). A card with no row here is "new" and due now.
-CREATE TABLE IF NOT EXISTS flashcard_reviews (
-  flashcard_id UUID NOT NULL REFERENCES flashcards(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  due_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ease REAL NOT NULL DEFAULT 2.5,
-  interval_days REAL NOT NULL DEFAULT 0,
-  reps INTEGER NOT NULL DEFAULT 0,
-  lapses INTEGER NOT NULL DEFAULT 0,
-  last_grade SMALLINT,
-  last_reviewed_at TIMESTAMPTZ,
-  PRIMARY KEY (flashcard_id, user_id)
-);
-CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_due ON flashcard_reviews(user_id, due_at);
-
--- A light study streak: one row per user per day they studied, so the dashboard can nudge them.
-CREATE TABLE IF NOT EXISTS study_days (
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-  studied_on DATE NOT NULL,
-  cards INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (user_id, class_id, studied_on)
-);
-
--- A personal, AI-generated study plan for the week. One per member per class; the plan JSON holds
--- the generated summary and study sessions so it survives across devices.
+-- A personal, AI-generated study plan for the week. One per member per class.
 CREATE TABLE IF NOT EXISTS study_plans (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,

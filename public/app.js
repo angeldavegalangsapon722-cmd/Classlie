@@ -27,7 +27,7 @@ const PREF_KEY = "classlie_prefs";
 function loadPrefs() { try { return JSON.parse(store.get(PREF_KEY)) || {}; } catch { return {}; } }
 function savePrefs(patch) { store.set(PREF_KEY, JSON.stringify({ ...loadPrefs(), ...patch })); }
 const prefs = loadPrefs();
-const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, prevPage: "overview", aiChat: [], aiBusy: false };
+const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, selectMode: {}, selected: {}, prevPage: "overview", aiChat: [], aiBusy: false };
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -81,7 +81,9 @@ function subjColor(item) { return subjectAccent(item.subject_name || item.title 
 function trackEvent() { /* Analytics is optional; keep core actions independent of it. */ }
 function taskCard(task, compact = false) {
   const due = task.due_at ? `<span class="task-due">${escapeHtml(fmtDate(task.due_at))}</span>` : "";
-  return `<article class="item-card task-card${compact ? " compact" : ""}"><label class="task-check"><input class="task-toggle" type="checkbox" data-id="${escapeHtml(task.id)}" ${task.completed ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} complete"></label><div class="item-main"><h3 class="task-title${task.completed ? " done" : ""}">${escapeHtml(task.title)}</h3>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}${due}</div>${priorityDot(task.priority)}</article>`;
+  const select = isAdmin() && state.selectMode.tasks && !task.is_private ? `<input class="check select-item" type="checkbox" data-select-id="${task.id}" ${state.selected.tasks?.includes(task.id) ? "checked" : ""} aria-label="Select task">` : "";
+  const controls = isAdmin() && !task.is_private ? `<div class="inline-actions"><button class="small-link" data-action="edit-item" data-resource="tasks" data-id="${task.id}">Edit</button><button class="small-link link-danger" data-action="delete-item" data-resource="tasks" data-id="${task.id}">Delete</button></div>` : "";
+  return `<article class="item-card task-card${compact ? " compact" : ""}">${select}<label class="task-check"><input class="task-toggle" type="checkbox" data-id="${escapeHtml(task.id)}" ${task.completed ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} complete"></label><div class="item-main"><h3 class="task-title${task.completed ? " done" : ""}">${escapeHtml(task.title)}</h3>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}${due}${controls}</div>${priorityDot(task.priority)}</article>`;
 }
 function minutesUntilNext(schedule) {
   const now = new Date();
@@ -206,12 +208,15 @@ function priorityDot(priority) {
 }
 // A clearly-labelled, non-intrusive spot to drop an ad snippet later.
 async function renderOverview() {
-  const [tasks, schedules, members] = await Promise.all([
-    fetchResource("tasks"), fetchResource("schedules"), api(`/classes/${cid()}/members`)
+  const [tasks, regular, members, tempResult] = await Promise.all([
+    fetchResource("tasks"), fetchResource("schedules"), api(`/classes/${cid()}/members`), api(`/class-data/${cid()}/temporary-schedules`)
   ]);
   const c = state.activeClass;
   const nextTasks = tasks.filter((t) => !t.completed).slice(0, 3);
-  const upcoming = [...schedules].sort((a, b) => minutesUntilNext(a) - minutesUntilNext(b)).slice(0, 4);
+  const todayKey = localDateStr(new Date());
+  const activeTemp = (tempResult.temporary_schedules || []).find((x) => x.start_date <= todayKey && x.end_date >= todayKey);
+  const schedules = activeTemp ? activeTemp.entries.filter((e) => e.entry_date >= todayKey).map((e) => ({ ...e, day_of_week: new Date(`${e.entry_date}T12:00:00`).getDay(), _date: e.entry_date })) : regular;
+  const upcoming = activeTemp ? schedules : [...schedules].sort((a, b) => minutesUntilNext(a) - minutesUntilNext(b)).slice(0, 4);
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const todayIdx = now.getDay();
@@ -224,11 +229,13 @@ async function renderOverview() {
   let hero = "";
   if (focus) {
     const which = isLive ? "end" : "start";
-    const target = occurrenceAt(focus, which, now);
+    const target = focus._date
+      ? new Date(`${focus._date}T${String(focus[which === "end" ? "end_time" : "start_time"]).slice(0, 5)}:00`)
+      : occurrenceAt(focus, which, now);
     const remaining = Math.max(0, target - now);
     hero = `<div class="upnext-hero">
-      <div class="upnext-text"><p class="eyebrow">${isLive ? "HAPPENING NOW" : "UP NEXT"}</p><h3>${escapeHtml(focus.title)}</h3>
-      <p>${days[focus.day_of_week]} · ${fmtTime(focus.start_time)}–${fmtTime(focus.end_time)}${focus.room ? " · " + escapeHtml(focus.room) : ""}</p></div>
+      <div class="upnext-text"><p class="eyebrow">${activeTemp ? escapeHtml(activeTemp.title) : isLive ? "HAPPENING NOW" : "UP NEXT"}</p><h3>${escapeHtml(focus.title)}</h3>
+      <p>${focus._date || days[focus.day_of_week]} · ${fmtTime(focus.start_time)}–${fmtTime(focus.end_time)}${focus.room ? " · " + escapeHtml(focus.room) : ""}</p></div>
       <div class="upnext-count"><span class="count-num" id="next-class-countdown" data-target="${target.toISOString()}" data-mode="${which}">${which === "end" ? "Ends in " : "Starts in "}${fmtCountdown(remaining)}</span><span class="stat-label">${which === "end" ? "CLASS ENDS" : "CLASS STARTS"}</span></div>
     </div>`;
   }
@@ -299,7 +306,9 @@ async function renderTasks() {
       ? "Add a task for the class, or a private one only you can see."
       : "Nothing matches this filter.");
 
-  return `${pageHead("Tasks", `<div class="action-row tasks-actions">${actionButton("＋ Add task", "add-item", "tasks")}</div>`)}
+  const selectedCount = state.selected.tasks?.length || 0;
+  const selectBar = isAdmin() ? `<button class="secondary" data-action="toggle-select" data-resource="tasks">${state.selectMode.tasks ? "Cancel select" : "Select"}</button>${state.selectMode.tasks ? `<button class="small-link" data-action="select-all" data-resource="tasks">Select all</button><button class="danger-button" data-action="bulk-delete" data-resource="tasks" ${selectedCount ? "" : "disabled"}>Delete Selected (${selectedCount})</button>` : ""}` : "";
+  return `${pageHead("Tasks", `<div class="action-row tasks-actions">${selectBar}${actionButton("＋ Add task", "add-item", "tasks")}</div>`)}
     <div class="tasks-content-grid">
       <div class="panel tasks-list-panel">
         <div class="section-title">
@@ -318,8 +327,11 @@ async function renderTasks() {
     </div>`;
 }
 async function renderSchedule() {
-  const [schedules, subjects] = await Promise.all([fetchResource("schedules"), fetchResource("subjects")]);
-  const editing = isAdmin() && state.scheduleEdit;
+  const [regular, subjects, tempResult] = await Promise.all([fetchResource("schedules"), fetchResource("subjects"), api(`/class-data/${cid()}/temporary-schedules`)]);
+  const todayKey = localDateStr(new Date());
+  const activeTemp = (tempResult.temporary_schedules || []).find((x) => x.start_date <= todayKey && x.end_date >= todayKey);
+  const schedules = activeTemp ? activeTemp.entries.filter((e) => e.entry_date >= todayKey).map((e) => ({ ...e, day_of_week: new Date(`${e.entry_date}T12:00:00`).getDay(), title: e.title, _date: e.entry_date })) : regular;
+  const editing = isAdmin() && state.scheduleEdit && !activeTemp;
   const editBtn = (s) => `<button class="small-link" data-action="edit-item" data-resource="schedules" data-id="${s.id}">Edit</button>`;
   const delBtn = (s) => `<button class="small-link link-danger" data-action="delete-item" data-resource="schedules" data-id="${s.id}">Delete</button>`;
   const subjectName = (id) => subjects.find((subject) => subject.id === id)?.name || "";
@@ -339,12 +351,32 @@ async function renderSchedule() {
       <div class="agenda-day-head"><h4>${escapeHtml(name)}</h4>${isToday ? `<span class="pill">Today</span>` : ""}<span class="pill">${list.length} class${list.length === 1 ? "" : "es"}</span></div>
       <div class="agenda-items">${items}</div></div>`;
   }).join("");
-  const rows = schedules.map((s) => `<tr><td>${days[s.day_of_week]}</td><td>${escapeHtml(s.title)}</td><td>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</td><td>${escapeHtml(s.room || "—")}</td><td>${editing ? `${editBtn(s)} ${delBtn(s)}` : ""}</td></tr>`).join("");
-  const actions = isAdmin() ? `<div class="action-row schedule-actions"><button type="button" class="${state.scheduleEdit ? "primary" : "secondary"}" data-action="toggle-schedule-edit">${state.scheduleEdit ? "✓ Done" : "✎ Edit"}</button>${actionButton("✦ Import schedule", "scan-schedule", "", true)}${actionButton("＋ Add schedule", "add-item", "schedules")}</div>` : "";
-  return `${pageHead("Schedule", actions)}
+  const rows = schedules.map((s) => `<tr><td>${s._date || days[s.day_of_week]}</td><td>${escapeHtml(s.title)}${s.subject ? ` · ${escapeHtml(s.subject)}` : ""}</td><td>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</td><td>${escapeHtml(s.room || "—")}</td><td>${editing ? `${editBtn(s)} ${delBtn(s)}` : ""}</td></tr>`).join("");
+  const actions = isAdmin() ? `<div class="action-row schedule-actions"><button type="button" class="${state.scheduleEdit ? "primary" : "secondary"}" data-action="toggle-schedule-edit">${state.scheduleEdit ? "✓ Done" : "✎ Edit"}</button><button type="button" class="secondary" data-action="add-temp-schedule">＋ Temporary schedule</button>${actionButton("✦ Import schedule", "scan-schedule", "", true)}${actionButton("＋ Add schedule", "add-item", "schedules")}</div>` : "";
+  return `${pageHead(`Schedule${activeTemp ? ` · ${activeTemp.title}` : ""}`, actions)}
   <div class="panel"><div class="section-title"><h3>This week</h3><span class="pill">${schedules.length} entries</span></div>${schedules.length ? `<div class="week-grid">${byDay}</div><div class="agenda">${agenda}</div>` : emptyState("No schedule yet", "An admin can add a subject, day, start time, end time, and room.")}</div>
   ${schedules.length ? `<div class="panel schedule-table" style="margin-top:17px"><div class="section-title"><h3>Schedule entries</h3></div><div class="table-wrap"><table><thead><tr><th>Day</th><th>Class / subject</th><th>Time</th><th>Room</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}`;
 }
+async function createTemporarySchedule() {
+  const today = localDateStr(new Date());
+  openModal("Temporary schedule", "EXAM WEEK", `<div class="ai-form">
+    <label>Title<input id="tmp-title" required maxlength="120" placeholder="Exam Week"></label>
+    <div class="two-col"><label>Start date<input id="tmp-start" type="date" value="${today}" required></label><label>End date<input id="tmp-end" type="date" value="${today}" required></label></div>
+    <label>Entry title<input id="tmp-entry" required maxlength="160" placeholder="Mathematics exam"></label>
+    <label>Subject<input id="tmp-subject" maxlength="120"></label><label>Date<input id="tmp-date" type="date" value="${today}" required></label>
+    <div class="two-col"><label>Start time<input id="tmp-from" type="time" value="08:00" required></label><label>End time<input id="tmp-to" type="time" value="09:00" required></label></div>
+    <label>Room<input id="tmp-room" maxlength="100"></label><p class="form-error" id="tmp-error"></p>
+    <div class="modal-actions"><button class="secondary" id="tmp-cancel" type="button">Cancel</button><button class="primary" id="tmp-save" type="button">Save schedule</button></div></div>`);
+  $("#tmp-cancel").onclick = closeModal;
+  $("#tmp-save").onclick = async () => {
+    const start_date = $("#tmp-start").value, end_date = $("#tmp-end").value;
+    const entry_date = $("#tmp-date").value;
+    if (!start_date || !end_date || end_date < start_date || entry_date < start_date || entry_date > end_date) return $("#tmp-error").textContent = "Entry date must fall within the schedule dates.";
+    try { await api(`/class-data/${cid()}/temporary-schedules`, { method: "POST", body: { title: $("#tmp-title").value, start_date, end_date, entries: [{ title: $("#tmp-entry").value, subject: $("#tmp-subject").value, entry_date, start_time: $("#tmp-from").value, end_time: $("#tmp-to").value, room: $("#tmp-room").value }] } }); closeModal(); toast("Temporary schedule saved."); await renderPage(); }
+    catch (e) { $("#tmp-error").textContent = e.message; }
+  };
+}
+
 // ---- AI schedule import (admin): scan a photo/text, then review before saving ----
 function openScheduleScan() {
   openModal("Import a schedule", "AI SCAN", `
@@ -514,31 +546,22 @@ async function navigateCalendar(action) {
 }
 
 async function renderNotes() {
-  const [subjects, { summary }, { quizzes }, study] = await Promise.all([
-    fetchResource("subjects"),
-    api(`/class-data/${cid()}/reviewer-summary`),
-    api(`/ai/${cid()}/quizzes`),
-    api(`/ai/${cid()}/study/due`)
+  const [subjects, { summary }, { quizzes }] = await Promise.all([
+    fetchResource("subjects"), api(`/class-data/${cid()}/reviewer-summary`), api(`/ai/${cid()}/quizzes`)
   ]);
-  const dueBySubject = {};
-  for (const s of study.subjects) dueBySubject[s.id] = s;
   const quizCounts = {};
   for (const q of quizzes) if (q.subject_id) quizCounts[q.subject_id] = (quizCounts[q.subject_id] || 0) + 1;
   const subjectCards = subjects.map((s) => {
     const reviews = summary[s.id] || 0;
     const qz = quizCounts[s.id] || 0;
-    const due = dueBySubject[s.id]?.due || 0;
-    const cards = dueBySubject[s.id]?.total || 0;
     const stats = [`${reviews} reviewer${reviews === 1 ? "" : "s"}`];
     if (qz) stats.push(`${qz} ${qz === 1 ? "quiz" : "quizzes"}`);
-    if (cards) stats.push(`${cards} card${cards === 1 ? "" : "s"}`);
-    const dueBadge = due ? `<span class="pill due-pill">${due} due</span>` : "";
     const accent = subjectAccent(s.name);
-    return `<div class="subject-card" style="--subject-accent:${accent}"><button class="subject-open" data-action="open-subject" data-id="${s.id}"><h3><span class="subject-title"><span class="subject-dot" style="background:${accent}"></span><span class="subject-name">${escapeHtml(s.name)}</span></span>${dueBadge}</h3><p>${stats.join(" · ")}</p></button>${isAdmin() ? `<div><button class="small-link" data-action="edit-item" data-resource="subjects" data-id="${s.id}">Edit subject</button></div>` : ""}</div>`;
+    return `<div class="subject-card" style="--subject-accent:${accent}">${isAdmin() && state.selectMode.subjects ? `<input class="check select-item" type="checkbox" data-select-id="${s.id}" ${state.selected.subjects?.includes(s.id) ? "checked" : ""} aria-label="Select subject">` : ""}<button class="subject-open" data-action="open-subject" data-id="${s.id}"><h3><span class="subject-title"><span class="subject-dot" style="background:${accent}"></span><span class="subject-name">${escapeHtml(s.name)}</span></span></h3><p>${stats.join(" · ")}</p></button>${isAdmin() ? `<div><button class="small-link" data-action="edit-item" data-resource="subjects" data-id="${s.id}">Edit subject</button></div>` : ""}</div>`;
   }).join("");
   const unassigned = quizzes.filter((q) => !q.subject_id);
   return `${pageHead("Subjects",
-    `<div class="action-row notes-actions"><button class="secondary" data-action="ai-reviewer">✦ AI reviewer</button><button class="secondary" data-action="ai-quiz">✦ Build a quiz</button>${isAdmin() ? actionButton("＋ Add subject", "add-item", "subjects", true) : ""}</div>`)}
+    `<div class="action-row notes-actions">${isAdmin() ? `<button class="secondary" data-action="toggle-select" data-resource="subjects">${state.selectMode.subjects ? "Cancel select" : "Select"}</button>${state.selectMode.subjects ? `<button class="small-link" data-action="select-all" data-resource="subjects">Select all</button><button class="danger-button" data-action="bulk-delete" data-resource="subjects" ${state.selected.subjects?.length ? "" : "disabled"}>Delete Selected (${state.selected.subjects?.length || 0})</button>` : ""}` : ""}<button class="secondary" data-action="ai-reviewer">✦ AI reviewer</button><button class="secondary" data-action="ai-quiz">✦ Build a quiz</button>${isAdmin() ? actionButton("＋ Add subject", "add-item", "subjects", true) : ""}</div>`)}
   <div class="panel">
   ${subjects.length ? `<div class="subject-grid">${subjectCards}</div>` : emptyState("No subjects yet", "Admins can create subjects to organize reviewers.")}</div>
   ${unassigned.length ? `<div class="panel" style="margin-top:17px"><div class="section-title"><h3>Other quizzes</h3><span class="pill">${unassigned.length}</span></div>
@@ -1222,7 +1245,7 @@ async function openSubject(subjectId, tab = "reviewers") {
   const isQuizzes = tab === "quizzes";
   const isTasks = tab === "tasks";
   const toolbar = isQuizzes
-    ? `<button type="button" class="primary" id="study-quiz-btn">✦ Quiz</button><button type="button" class="secondary" id="study-flash-btn">✦ Flashcards</button>`
+    ? `<button type="button" class="primary" id="study-quiz-btn">✦ Quiz</button>`
     : isTasks
       ? `<button type="button" class="primary" data-subject-add-task>＋ Add task</button>`
       : `<button type="button" class="primary" id="add-reviewer-btn">＋ Add reviewer</button>
@@ -1246,7 +1269,6 @@ async function openSubject(subjectId, tab = "reviewers") {
   $$("[data-subject-tab]", body).forEach((b) => b.addEventListener("click", () => { if (b.dataset.subjectTab !== tab) openSubject(subjectId, b.dataset.subjectTab); }));
   if (isQuizzes) {
     $("#study-quiz-btn").onclick = () => openQuizBuilder({ subjectIds: [subjectId], subjectName }).catch((e) => toast(e.message));
-    $("#study-flash-btn").onclick = () => openFlashcards({ subjectId, subjectName }).catch((e) => toast(e.message));
     $$("[data-quiz-open]", body).forEach((el) => el.addEventListener("click", () => openQuiz(el.dataset.quizOpen).catch((e) => toast(e.message))));
     $$("[data-quiz-delete]", body).forEach((el) => el.addEventListener("click", async () => {
       if (!confirm("Delete this quiz and all of its attempts?")) return;
@@ -1367,7 +1389,7 @@ function openNoteEditor(note, subjectId, subjectName) {
 }
 
 
-/* ---------- AI study tools (reviewers, quizzes, flashcards) ---------- */
+/* ---------- AI study tools (reviewers and quizzes) ---------- */
 
 function aiSubjectOptions(subjects, selectedId = "", placeholder = "Select a subject…") {
   return `<option value="">${escapeHtml(placeholder)}</option>${subjects.map((s) => `<option value="${s.id}" ${s.id === selectedId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}`;
@@ -1443,34 +1465,46 @@ function showReviewerPreview(reviewer, meta) {
 async function openQuizBuilder(prefill = {}) {
   const [subjects, { summary }] = await Promise.all([fetchResource("subjects"), api(`/class-data/${cid()}/reviewer-summary`)]);
   const preselect = new Set(prefill.subjectIds || []);
-  const rows = subjects.map((s) => {
-    const reviews = summary[s.id] || 0;
-      return `<label class="topic-check"><input type="checkbox" value="${s.id}" ${preselect.has(s.id) ? "checked" : ""}><span class="topic-name">${escapeHtml(s.name)}</span><span class="muted topic-count">${reviews} reviewer${reviews === 1 ? "" : "s"}</span></label>`;
-  }).join("");
+  const subjectRows = subjects.map((s) => `<label class="topic-check"><input type="checkbox" data-quiz-subject value="${s.id}" ${preselect.has(s.id) ? "checked" : ""}><span class="topic-name">${escapeHtml(s.name)}</span><span class="muted topic-count">${summary[s.id] || 0} reviewer(s)</span></label>`).join("");
   openWideModal("Build a quiz", "AI QUIZ", `
-    <p class="muted">Pick the subjects to be quizzed. AI writes multiple-choice questions from their reviewers.</p>
-    <div class="ai-form">
-      <div class="inline-actions" style="margin-bottom:8px"><button type="button" class="small-link" id="qz-all">Select all</button><button type="button" class="small-link" id="qz-none">Clear</button></div>
-      <div class="topic-picker" id="qz-subjects">${rows || emptyState("No subjects yet", "Create a subject and add reviewers first.")}</div>
-      <div class="two-col">
-        <label>Questions<input type="number" id="qz-count" min="3" max="20" value="5"></label>
-        <label>Difficulty<select id="qz-difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label>
-      </div>
-      <p class="form-error" id="qz-error"></p>
-      <div class="modal-actions"><button type="button" class="secondary" id="qz-cancel">Cancel</button><button type="button" class="primary" id="qz-go">✦ Generate quiz</button></div>
-    </div>`);
-  $("#qz-all").onclick = () => $$("#qz-subjects input", $("#modal-body")).forEach((c) => { c.checked = true; });
-  $("#qz-none").onclick = () => $$("#qz-subjects input", $("#modal-body")).forEach((c) => { c.checked = false; });
+    <p class="muted">Choose a subject, then select the topics or reviewers the quiz should cover.</p><div class="ai-form">
+      <div class="inline-actions"><button type="button" class="small-link" id="qz-all-subjects">Select all subjects</button><button type="button" class="small-link" id="qz-none-subjects">Clear subjects</button></div>
+      <div class="topic-picker" id="qz-subjects">${subjectRows || emptyState("No subjects yet", "Create a subject and add reviewers first.")}</div>
+      <div class="inline-actions"><strong>Topics / reviewers</strong><button type="button" class="small-link" id="qz-all-reviewers">Select all</button><button type="button" class="small-link" id="qz-none-reviewers">Deselect all</button></div>
+      <div class="topic-picker" id="qz-reviewers"><p class="muted">Select one or more subjects to load their reviewers.</p></div>
+      <div class="two-col"><label>Questions<input type="number" id="qz-count" min="3" max="20" value="5"></label><label>Difficulty<select id="qz-difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label></div>
+      <p class="form-error" id="qz-error"></p><div class="modal-actions"><button type="button" class="secondary" id="qz-cancel">Cancel</button><button type="button" class="primary" id="qz-go">✦ Generate quiz</button></div></div>`);
+  const loadReviewers = async () => {
+    const ids = $$("[data-quiz-subject]:checked", $("#modal-body")).map((x) => x.value);
+    const target = $("#qz-reviewers");
+    if (!ids.length) { target.innerHTML = '<p class="muted">Select one or more subjects to load their reviewers.</p>'; return; }
+    target.innerHTML = '<p class="muted">Loading reviewers…</p>';
+    try {
+      const all = await Promise.all(ids.map(async (id) => {
+        const [notes, uploads, topics] = await Promise.all([api(`/class-data/${cid()}/subjects/${id}/notes`), api(`/uploads/${cid()}?subject_id=${id}`), api(`/class-data/${cid()}/subjects/${id}/topics`)]);
+        return [...(topics.topics || []).map((x) => ({ ...x, kind: "Topic", selection: "topic" })), ...(notes.notes || []).map((x) => ({ ...x, kind: "Reviewer", selection: "reviewer" })), ...(uploads.uploads || []).map((x) => ({ ...x, kind: "Upload", selection: "reviewer" }))].map((x) => ({ ...x, subject_id: id }));
+      }));
+      const reviewers = all.flat();
+      target.innerHTML = reviewers.length ? reviewers.map((r) => `<label class="topic-check"><input type="checkbox" data-quiz-${r.selection} value="${r.id}" checked><span class="topic-name">${escapeHtml(r.title)}</span><span class="muted topic-count">${escapeHtml(r.kind)}</span></label>`).join("") : '<p class="muted">These subjects have no reviewers yet.</p>';
+    } catch (error) { target.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`; }
+  };
+  $("#qz-subjects").addEventListener("change", loadReviewers);
+  if (preselect.size) await loadReviewers();
+  $("#qz-all-subjects").onclick = () => { $$('[data-quiz-subject]', $("#modal-body")).forEach((x) => x.checked = true); loadReviewers(); };
+  $("#qz-none-subjects").onclick = () => { $$('[data-quiz-subject]', $("#modal-body")).forEach((x) => x.checked = false); loadReviewers(); };
+  $("#qz-all-reviewers").onclick = () => $$('[data-quiz-reviewer],[data-quiz-topic]', $("#modal-body")).forEach((x) => x.checked = true);
+  $("#qz-none-reviewers").onclick = () => $$('[data-quiz-reviewer],[data-quiz-topic]', $("#modal-body")).forEach((x) => x.checked = false);
   $("#qz-cancel").onclick = () => { closeModal(); const only = prefill.subjectIds?.length === 1 ? prefill.subjectIds[0] : null; if (only) openSubject(only, "quizzes").catch(() => {}); };
   $("#qz-go").onclick = async () => {
-    const subjectIds = $$("#qz-subjects input:checked", $("#modal-body")).map((c) => c.value);
-    if (!subjectIds.length) return ($("#qz-error").textContent = "Select at least one subject.");
+    const subjectIds = $$('[data-quiz-subject]:checked', $("#modal-body")).map((x) => x.value);
+    const reviewerIds = $$('[data-quiz-reviewer]:checked', $("#modal-body")).map((x) => x.value);
+    const topicIds = $$('[data-quiz-topic]:checked', $("#modal-body")).map((x) => x.value);
+    if (!subjectIds.length) return $("#qz-error").textContent = "Select at least one subject.";
+    if (!reviewerIds.length && !topicIds.length) return $("#qz-error").textContent = "Select at least one topic or reviewer.";
     const button = $("#qz-go"); button.disabled = true; button.textContent = "✦ Writing questions…";
-    $("#qz-error").textContent = "";
     try {
-      const { quiz } = await api(`/ai/${cid()}/quizzes/generate`, { method: "POST", body: { subject_ids: subjectIds, count: Number($("#qz-count").value), difficulty: $("#qz-difficulty").value } });
-      trackEvent("ai_used", { tool: "quiz" });
-      showQuizPreview(quiz, { subjectIds, subjectName: subjectIds.length === 1 ? subjects.find((s) => s.id === subjectIds[0])?.name : null });
+      const { quiz } = await api(`/ai/${cid()}/quizzes/generate`, { method: "POST", body: { subject_ids: subjectIds, reviewer_ids: reviewerIds, topic_ids: topicIds, count: Number($("#qz-count").value), difficulty: $("#qz-difficulty").value } });
+      trackEvent("ai_used", { tool: "quiz" }); showQuizPreview(quiz, { subjectIds, subjectName: subjectIds.length === 1 ? subjects.find((s) => s.id === subjectIds[0])?.name : null });
     } catch (error) { $("#qz-error").textContent = error.message; button.disabled = false; button.textContent = "✦ Generate quiz"; }
   };
 }
@@ -1547,26 +1581,33 @@ async function openQuiz(quizId) {
 }
 
 function runQuiz(quiz) {
-  openWideModal(quiz.title, "AI QUIZ", `
-    <form id="quiz-run" class="ai-form"><div class="quiz-run">${quiz.questions.map((q, i) => `<fieldset class="quiz-run-q" data-i="${q.source_index ?? i}">
-      <legend>${i + 1}. ${escapeHtml(q.question)}</legend>
-      ${q.options.map((o, oi) => `<label class="quiz-choice"><input type="radio" name="q${q.source_index ?? i}" value="${oi}"><span>${escapeHtml(o)}</span></label>`).join("")}</fieldset>`).join("")}</div>
-      <p class="form-error" id="qz-error"></p>
-      <div class="modal-actions"><button type="button" class="secondary" id="qz-quit">Quit</button><button type="submit" class="primary">Submit answers</button></div></form>`);
-  $("#qz-quit").onclick = () => closeModal();
-  $("#quiz-run").onsubmit = async (e) => {
-    e.preventDefault();
-    const answers = Array(quiz.questions.length).fill(null);
-    quiz.questions.forEach((question, i) => {
-      const sourceIndex = question.source_index ?? i;
-      const picked = $(`input[name="q${sourceIndex}"]:checked`, $("#quiz-run"));
-      answers[sourceIndex] = picked ? Number(picked.value) : null;
-    });
-    try {
-      const { attempt, review } = await api(`/ai/${cid()}/quizzes/${quiz.id}/attempts`, { method: "POST", body: { answers } });
-      showQuizResult(quiz, attempt, review);
-    } catch (error) { $("#qz-error").textContent = error.message; }
+  const answers = Array(quiz.questions.length).fill(null);
+  let index = 0;
+  const render = () => {
+    const q = quiz.questions[index];
+    const sourceIndex = q.source_index ?? index;
+    const atLast = index === quiz.questions.length - 1;
+    openWideModal(quiz.title, "AI QUIZ", `
+      <form id="quiz-run" class="ai-form"><div class="quiz-run-paged">
+        <p class="pill">Question ${index + 1} of ${quiz.questions.length}</p>
+        <fieldset class="quiz-run-q"><legend>${escapeHtml(q.question)}</legend>
+          ${q.options.map((o, oi) => `<label class="quiz-choice"><input type="radio" name="q${index}" value="${oi}" ${answers[index] === oi ? "checked" : ""}><span>${escapeHtml(o)}</span></label>`).join("")}
+        </fieldset></div><p class="form-error" id="qz-error"></p>
+        <div class="modal-actions"><button type="button" class="secondary" id="qz-quit">Quit</button>${index ? '<button type="button" class="secondary" id="qz-prev">Previous</button>' : ''}${atLast ? '<button type="submit" class="primary">Submit Quiz</button>' : '<button type="button" class="primary" id="qz-next">Next</button>'}</div></form>`);
+    const form = $("#quiz-run");
+    $("#qz-quit").onclick = () => closeModal();
+    if (index) $("#qz-prev").onclick = () => { const picked = $("input[name=q" + index + "]:checked", form); if (picked) answers[index] = Number(picked.value); index--; render(); };
+    if (!atLast) $("#qz-next").onclick = () => { const picked = $("input[name=q" + index + "]:checked", form); if (picked) answers[index] = Number(picked.value); index++; render(); };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const picked = $("input[name=q" + index + "]:checked", form); if (picked) answers[index] = Number(picked.value);
+      const ordered = Array(quiz.questions.length).fill(null);
+      quiz.questions.forEach((question, i) => { ordered[question.source_index ?? i] = answers[i]; });
+      try { const { attempt, review } = await api(`/ai/${cid()}/quizzes/${quiz.id}/attempts`, { method: "POST", body: { answers: ordered } }); showQuizResult(quiz, attempt, review); }
+      catch (error) { $("#qz-error").textContent = error.message; }
+    };
   };
+  render();
 }
 
 function showQuizResult(quiz, attempt, review) {
@@ -1587,101 +1628,6 @@ function showQuizResult(quiz, attempt, review) {
     <div class="modal-actions"><button type="button" class="secondary" id="qz-again">Try again</button><button type="button" class="primary" id="qz-done">Done</button></div>`);
   $("#qz-again").onclick = () => runQuiz(quiz);
   $("#qz-done").onclick = async () => { closeModal(); await renderPage(); };
-}
-
-/* ---- flashcards: spaced-repetition study from every reviewer in a subject ---- */
-async function generateFlashcards(subjectId, subjectName) {
-  openWideModal("Generating flashcards", (subjectName || "SUBJECT").toUpperCase(),
-    `<p class="muted">✦ Building a deck from the ${escapeHtml(subjectName || "subject")} reviewers… this can take a few seconds.</p>`);
-  try {
-    await api(`/ai/${cid()}/flashcards/generate`, { method: "POST", body: { subject_id: subjectId } });
-    trackEvent("ai_used", { tool: "flashcards" });
-    return true;
-  } catch (error) {
-    closeModal();
-    toast(error.message);
-    return false;
-  }
-}
-
-async function openFlashcards({ subjectId, subjectName = "Subject" } = {}) {
-  let data;
-  try { data = await api(`/ai/${cid()}/subjects/${subjectId}/flashcards`); }
-  catch (error) {
-    openModal("Flashcards", "AI STUDY", `<p class="form-error">${escapeHtml(error.message)}</p><div class="modal-actions"><button type="button" class="secondary" id="fc-back">Close</button></div>`);
-    $("#fc-back").onclick = () => { closeModal(); openSubject(subjectId, "quizzes").catch(() => {}); };
-    return;
-  }
-  const back = () => openSubject(subjectId, "quizzes").catch(() => {});
-  if (!data.total) {
-    openModal("Flashcards", subjectName.toUpperCase(), `
-      <p class="muted">No cards for ${escapeHtml(subjectName)} yet. AI can build a deck from this subject's reviewers.</p>
-      <div class="modal-actions"><button type="button" class="secondary" id="fc-back">← Back</button><button type="button" class="primary" id="fc-gen">✦ Generate cards</button></div>`);
-    $("#fc-back").onclick = back;
-    $("#fc-gen").onclick = async () => { closeModal(); if (await generateFlashcards(subjectId, subjectName)) openFlashcards({ subjectId, subjectName }); };
-    return;
-  }
-  const due = data.cards.filter((c) => c.due);
-  openModal("Flashcards", subjectName.toUpperCase(), `
-    <p class="muted">${data.total} card${data.total === 1 ? "" : "s"} · <strong>${due.length} due</strong> to review now.</p>
-    <div class="modal-actions">
-      <button type="button" class="secondary" id="fc-back">← Back</button>
-      <button type="button" class="secondary" id="fc-more">✦ Generate more</button>
-      <button type="button" class="primary" id="fc-study">${due.length ? `Study ${due.length} due` : "Study all"}</button>
-    </div>`);
-  $("#fc-back").onclick = back;
-  $("#fc-more").onclick = async () => { closeModal(); if (await generateFlashcards(subjectId, subjectName)) openFlashcards({ subjectId, subjectName }); };
-  $("#fc-study").onclick = () => studyCards(subjectId, subjectName, due.length ? due : data.cards);
-}
-
-function studyCards(subjectId, subjectName, cards) {
-  const total = cards.length;
-  let index = 0, flipped = false, reviewed = 0;
-  const graded = new Set();
-  const back = () => openSubject(subjectId, "quizzes").catch(() => {});
-  const finish = () => {
-    openModal("Session complete", "FLASHCARDS", `
-      <div class="score-banner good"><span class="score-num">${reviewed}</span><span>card${reviewed === 1 ? "" : "s"} reviewed · nice work!</span></div>
-      <div class="modal-actions"><button type="button" class="secondary" id="fc-back">← ${escapeHtml(subjectName)}</button><button type="button" class="primary" id="fc-done">Done</button></div>`);
-    $("#fc-back").onclick = back;
-    $("#fc-done").onclick = async () => { closeModal(); await renderPage(); };
-  };
-  const draw = () => {
-    if (index >= total) return finish();
-    const card = cards[index];
-    openWideModal("Flashcards", subjectName.toUpperCase(), `
-      <div class="fc-card ${flipped ? "flipped" : ""}" id="fc-card"><div class="fc-inner">
-        <div class="fc-face fc-front"><span class="fc-label">QUESTION</span><p>${escapeHtml(card.front)}</p></div>
-        <div class="fc-face fc-back"><span class="fc-label">ANSWER</span><p>${escapeHtml(card.back)}</p></div>
-      </div></div>
-      <p class="fc-hint">${flipped ? "How well did you know it?" : "Tap the card to flip"} · ${index + 1} / ${total}</p>
-      <div class="modal-actions fc-grades">
-        <button type="button" class="secondary" id="fc-prev" ${index === 0 ? "disabled" : ""}>← Prev</button>
-        <button type="button" class="secondary" id="fc-back">Back to deck</button>
-        <button type="button" class="fc-grade grade-again" data-grade="0" ${flipped ? "" : "disabled"}>Again</button>
-        <button type="button" class="fc-grade grade-hard" data-grade="1" ${flipped ? "" : "disabled"}>Hard</button>
-        <button type="button" class="fc-grade grade-good" data-grade="2" ${flipped ? "" : "disabled"}>Good</button>
-        <button type="button" class="fc-grade grade-easy" data-grade="3" ${flipped ? "" : "disabled"}>Easy</button>
-      </div>`);
-    $("#fc-back").onclick = back;
-    $("#fc-prev").onclick = () => {
-      if (index === 0) return;
-      index -= 1; flipped = false; draw();
-    };
-    $("#fc-card").onclick = () => {
-      flipped = !flipped;
-      $("#fc-card").classList.toggle("flipped", flipped);
-      $$(".fc-grade", $("#modal-body")).forEach((b) => { b.disabled = !flipped; });
-    };
-    $$("[data-grade]", $("#modal-body")).forEach((b) => b.onclick = async () => {
-      b.disabled = true;
-      try { await api(`/ai/${cid()}/flashcards/${card.id}/review`, { method: "POST", body: { grade: Number(b.dataset.grade) } }); }
-      catch (e) { toast(e.message); }
-      if (!graded.has(card.id)) { graded.add(card.id); reviewed += 1; }
-      index += 1; flipped = false; draw();
-    });
-  };
-  draw();
 }
 
 /* ---------- study plan (AI) ---------- */
@@ -1927,7 +1873,16 @@ async function handleAction(action, el) {
   if (action === "open-subject") return openSubject(id);
   if (action === "add-item") return openItemForm(resource);
   if (action === "scan-schedule") return openScheduleScan();
+  if (action === "add-temp-schedule") return createTemporarySchedule();
   if (action === "toggle-schedule-edit") { state.scheduleEdit = !state.scheduleEdit; return renderPage(); }
+  if (action === "toggle-select") { state.selectMode[resource] = !state.selectMode[resource]; state.selected[resource] = []; return renderPage(); }
+  if (action === "select-all") { const rows = await fetchResource(resource); state.selected[resource] = rows.filter((x) => resource !== "tasks" || !x.is_private).map((x) => x.id); return renderPage(); }
+  if (action === "bulk-delete") {
+    const ids = state.selected[resource] || [];
+    if (!ids.length || !confirm(`Delete ${ids.length} selected ${resource}? This can’t be undone.`)) return;
+    const result = await api(`/class-data/${cid()}/${resource}/bulk-delete`, { method: "POST", body: { ids } });
+    state.selected[resource] = []; state.selectMode[resource] = false; toast(`Deleted ${result.deleted} ${resource}.`); return renderPage();
+  }
   if (action === "ai-reviewer") return openReviewerGenerator();
   if (action === "ai-quiz") return openQuizBuilder();
   if (action === "study-plan") return openStudyPlan();
@@ -1969,6 +1924,12 @@ function bindPageEvents() {
   }));
   $$("[data-page-link]", root).forEach((el) => el.addEventListener("click", () => { state.page = el.dataset.pageLink; renderPage(); }));
   $$("[data-task-filter]", root).forEach((el) => el.addEventListener("click", () => { state.tasksFilter = el.dataset.taskFilter; savePrefs({ tasksFilter: state.tasksFilter }); renderPage(); }));
+  $$(".select-item", root).forEach((el) => el.addEventListener("change", () => {
+    const resource = state.page === "tasks" ? "tasks" : "subjects";
+    const selected = new Set(state.selected[resource] || []);
+    if (el.checked) selected.add(el.dataset.selectId); else selected.delete(el.dataset.selectId);
+    state.selected[resource] = [...selected]; renderPage();
+  }));
   const taskSort = $("[data-task-sort]", root);
   if (taskSort) taskSort.addEventListener("change", () => { state.taskSort = taskSort.value; savePrefs({ taskSort: state.taskSort }); renderPage(); });
   $$("[data-cal-day]", root).forEach((el) => el.addEventListener("click", () => openCalDay(el.dataset.calDay).catch((e) => toast(e.message))));

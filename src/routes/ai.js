@@ -1,13 +1,12 @@
 const router = require("express").Router();
 const multer = require("multer");
-const crypto = require("crypto");
 const { requireAuth } = require("../middleware/auth");
 const { requireClassMember } = require("../middleware/classAccess");
 const { badRequest } = require("../middleware/errors");
 const { isUuid, uuidParams, cleanText } = require("../middleware/validate");
 const { logActivity } = require("../activity");
 const { extractDocument } = require("../extract");
-const { generateReviewer, generateQuiz, generateFlashcards, generateStudyPlan, askClasslie } = require("../gemini");
+const { generateReviewer, generateQuiz, generateStudyPlan, askClasslie } = require("../gemini");
 const { upcomingSessions, describeSession, nowLine, fmtClock } = require("../classTime");
 
 router.use(requireAuth);
@@ -203,7 +202,23 @@ router.post("/:classId/quizzes/generate", requireClassMember, async (req, res, n
   try {
     const db = req.app.locals.db;
     const subjects = await subjectsInClass(db, req.params.classId, req.body?.subject_ids);
-    let notes = await notesForSubjects(db, req.params.classId, subjects.map((s) => s.id));
+    let notes = Array.isArray(req.body?.reviewer_ids) || Array.isArray(req.body?.topic_ids)
+      ? [] : await notesForSubjects(db, req.params.classId, subjects.map((s) => s.id));
+    const topicRows = await topicsInClass(db, req.params.classId, req.body?.topic_ids);
+    if (Array.isArray(req.body?.topic_ids) && req.body.topic_ids.length) {
+      if (!topicRows.length) throw badRequest("Select at least one topic.");
+      notes = await notesForTopics(db, topicRows.map((t) => t.id));
+    }
+    if (Array.isArray(req.body?.reviewer_ids) && req.body.reviewer_ids.length) {
+      const reviewerIds = [...new Set(req.body.reviewer_ids.filter(isUuid))].slice(0, 100);
+      const selected = await db.query(
+        `SELECT title,content FROM notes WHERE id=ANY($1::uuid[]) AND subject_id=ANY($2::uuid[])
+         UNION ALL SELECT title,content FROM uploads WHERE id=ANY($1::uuid[]) AND class_id=$3 AND subject_id=ANY($2::uuid[])`,
+        [reviewerIds, subjects.map((s) => s.id), req.params.classId]
+      );
+      notes = [...notes, ...selected.rows];
+      if (notes.length !== reviewerIds.length) throw badRequest("One or more selected reviewers no longer belong to these subjects.");
+    }
     let label = subjects.length === 1 ? subjects[0].name : subjects[0]?.name;
     if (!subjects.length) {
       const topics = await topicsInClass(db, req.params.classId, req.body?.topic_ids);
@@ -324,155 +339,6 @@ router.get("/:classId/quizzes/:quizId/attempts", requireClassMember, async (req,
   } catch (error) { next(error); }
 });
 
-/* ---------------- flashcards (with spaced repetition) ---------------- */
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-// A small SM-2 variant. grade: 0 = again, 1 = hard, 2 = good, 3 = easy.
-function nextReview({ ease = 2.5, intervalDays = 0, reps = 0, lapses = 0 }, grade) {
-  if (grade === 0) {
-    return { ease: Math.max(1.3, ease - 0.2), intervalDays: 0, reps: 0, lapses: lapses + 1, dueMs: 10 * 60 * 1000 };
-  }
-  let nextEase = ease, interval = intervalDays;
-  if (grade === 1) { nextEase = Math.max(1.3, ease - 0.15); interval = intervalDays < 1 ? 1 : intervalDays * 1.2; }
-  else if (grade === 2) { interval = reps === 0 ? 1 : reps === 1 ? 3 : Math.round(intervalDays * ease); }
-  else { nextEase = ease + 0.15; interval = reps === 0 ? 3 : reps === 1 ? 5 : Math.round(intervalDays * ease * 1.3); }
-  interval = Math.max(1, Math.min(interval, 365));
-  return { ease: nextEase, intervalDays: interval, reps: reps + 1, lapses, dueMs: interval * DAY_MS };
-}
-
-// Persist a freshly generated deck (de-duplicated) and hand back the stored cards.
-async function storeCards(db, classId, subjectId, userId, cards) {
-  const params = [];
-  const rows = cards.map((c, i) => {
-    const b = i * 6;
-    params.push(classId, subjectId, c.front, c.back, crypto.createHash("md5").update(c.front).digest("hex"), userId);
-    return `($${b + 1}::uuid,$${b + 2}::uuid,$${b + 3},$${b + 4},$${b + 5},$${b + 6}::uuid)`;
-  });
-  if (!rows.length) return;
-  await db.query(
-    `INSERT INTO flashcards(class_id,subject_id,front,back,front_hash,created_by) VALUES ${rows.join(",")}
-     ON CONFLICT (subject_id, front_hash) DO NOTHING`,
-    params
-  );
-}
-
-async function deckFor(db, subjectId, userId) {
-  const result = await db.query(
-    `SELECT f.id, f.front, f.back, COALESCE(r.due_at, NOW()) AS due_at,
-            (r.due_at IS NULL OR r.due_at <= NOW()) AS due,
-            COALESCE(r.reps, 0) AS reps, r.last_reviewed_at
-     FROM flashcards f
-     LEFT JOIN flashcard_reviews r ON r.flashcard_id = f.id AND r.user_id = $2
-     WHERE f.subject_id = $1
-     ORDER BY due DESC, f.created_at`,
-    [subjectId, userId]
-  );
-  return result.rows;
-}
-
-// Build (or top up) the flashcard deck for one subject, then return it with review state.
-router.post("/:classId/flashcards/generate", requireClassMember, async (req, res, next) => {
-  try {
-    const db = req.app.locals.db;
-    const requested = req.body?.subject_id || (Array.isArray(req.body?.subject_ids) ? req.body.subject_ids[0] : null);
-    if (!requested || !isUuid(requested)) throw badRequest("Pick a subject to build flashcards from.");
-    const subject = (await db.query("SELECT id, name FROM subjects WHERE id=$1 AND class_id=$2", [requested, req.params.classId])).rows[0];
-    if (!subject) throw badRequest("That subject does not belong to this class.");
-    const notes = await notesForSubjects(db, req.params.classId, [subject.id]);
-    if (!notes.length) throw badRequest("There are no reviewers to build flashcards from yet.");
-    const count = Math.min(Math.max(Number(req.body?.count) || 12, 4), 40);
-    const cards = await generateFlashcards({ notes, count });
-    await storeCards(db, req.params.classId, subject.id, req.user.id, cards);
-    res.json({ cards: await deckFor(db, subject.id, req.user.id), subject });
-  } catch (error) { next(error); }
-});
-
-// The stored deck for a subject, marked with what is due for this user.
-router.get("/:classId/subjects/:subjectId/flashcards", requireClassMember, async (req, res, next) => {
-  try {
-    const db = req.app.locals.db;
-    const subject = (await db.query("SELECT id, name, color FROM subjects WHERE id=$1 AND class_id=$2", [req.params.subjectId, req.params.classId])).rows[0];
-    if (!subject) return res.status(404).json({ error: "Subject not found." });
-    const cards = await deckFor(db, subject.id, req.user.id);
-    res.json({ subject, cards, due: cards.filter((c) => c.due).length, total: cards.length });
-  } catch (error) { next(error); }
-});
-
-// Record a review and schedule the card's next appearance.
-router.post("/:classId/flashcards/:cardId/review", requireClassMember, async (req, res, next) => {
-  try {
-    const db = req.app.locals.db;
-    const grade = Number(req.body?.grade);
-    if (!Number.isInteger(grade) || grade < 0 || grade > 3) throw badRequest("Send a grade from 0 to 3.");
-    const card = (await db.query("SELECT id, class_id FROM flashcards WHERE id=$1 AND class_id=$2", [req.params.cardId, req.params.classId])).rows[0];
-    if (!card) return res.status(404).json({ error: "Card not found." });
-    const current = (await db.query("SELECT ease, interval_days, reps, lapses FROM flashcard_reviews WHERE flashcard_id=$1 AND user_id=$2", [card.id, req.user.id])).rows[0] || {};
-    const state = nextReview({
-      ease: current.ease !== undefined ? Number(current.ease) : 2.5,
-      intervalDays: current.interval_days !== undefined ? Number(current.interval_days) : 0,
-      reps: current.reps || 0,
-      lapses: current.lapses || 0
-    }, grade);
-    const dueAt = new Date(Date.now() + state.dueMs);
-    const saved = (await db.query(
-      `INSERT INTO flashcard_reviews(flashcard_id,user_id,due_at,ease,interval_days,reps,lapses,last_grade,last_reviewed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
-       ON CONFLICT (flashcard_id,user_id) DO UPDATE SET
-         due_at=EXCLUDED.due_at, ease=EXCLUDED.ease, interval_days=EXCLUDED.interval_days,
-         reps=EXCLUDED.reps, lapses=EXCLUDED.lapses, last_grade=EXCLUDED.last_grade, last_reviewed_at=NOW()
-       RETURNING due_at, ease, interval_days, reps, lapses`,
-      [card.id, req.user.id, dueAt, state.ease, state.intervalDays, state.reps, state.lapses, grade]
-    )).rows[0];
-    await db.query(
-      `INSERT INTO study_days(user_id,class_id,studied_on,cards) VALUES ($1,$2,CURRENT_DATE,1)
-       ON CONFLICT (user_id,class_id,studied_on) DO UPDATE SET cards = study_days.cards + 1`,
-      [req.user.id, req.params.classId]
-    );
-    res.json({ review: saved });
-  } catch (error) { next(error); }
-});
-
-// What is due to study across the whole class, plus the current study streak.
-router.get("/:classId/study/due", requireClassMember, async (req, res, next) => {
-  try {
-    const db = req.app.locals.db;
-    const subjects = (await db.query(
-      `SELECT s.id, s.name, s.color,
-              COUNT(f.id) FILTER (WHERE f.id IS NOT NULL AND (r.due_at IS NULL OR r.due_at <= NOW()))::int AS due,
-              COUNT(f.id)::int AS total
-       FROM subjects s
-       JOIN flashcards f ON f.subject_id = s.id
-       LEFT JOIN flashcard_reviews r ON r.flashcard_id = f.id AND r.user_id = $1
-       WHERE s.class_id = $2
-       GROUP BY s.id
-       ORDER BY due DESC, s.name`,
-      [req.user.id, req.params.classId]
-    )).rows;
-    const days = (await db.query(
-      "SELECT studied_on FROM study_days WHERE user_id=$1 AND class_id=$2 ORDER BY studied_on DESC LIMIT 400",
-      [req.user.id, req.params.classId]
-    )).rows.map((r) => r.studied_on);
-    res.json({ subjects, totalDue: subjects.reduce((n, s) => n + s.due, 0), streak: studyStreak(days) });
-  } catch (error) { next(error); }
-});
-
-// Consecutive days studied, allowing today to still be unfinished (so a streak counts until we miss a full day).
-function studyStreak(daysDesc) {
-  if (!daysDesc.length) return 0;
-  const toKey = (d) => {
-    const x = typeof d === "string" ? new Date(d + "T00:00:00Z") : new Date(d);
-    return Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
-  };
-  const keys = new Set(daysDesc.map(toKey));
-  const today = new Date();
-  let cursor = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-  if (!keys.has(cursor)) cursor -= DAY_MS; // streak may still be alive if yesterday was studied
-  let streak = 0;
-  while (keys.has(cursor)) { streak += 1; cursor -= DAY_MS; }
-  return streak;
-}
-
 /* ---------------- study plan (personal, saved) ---------------- */
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -536,22 +402,17 @@ router.delete("/:classId/study-plan", requireClassMember, async (req, res, next)
 /* ---------------- ClasslieAI assistant (read-only) ---------------- */
 
 // A compact, factual snapshot of the class the assistant is allowed to reason over.
-// Cached briefly per class+user so a back-and-forth chat doesn't re-run the same four queries.
-const SNAPSHOT_TTL_MS = 30 * 1000;
-const snapshotCache = new Map();
-async function classSnapshotData(db, classId, userId) {
-  const key = `${classId}:${userId}`;
-  const cached = snapshotCache.get(key);
-  if (cached && cached.expires > Date.now()) return cached.value;
-  const [tasks, schedules, subjects] = await Promise.all([
+// Rebuilt on every request so AI answers use the latest class data.
+async function classSnapshotData(db, classId, userId, role = "student") {
+  const [tasks, schedules, subjects, reviewers, topics, attendance, temporarySchedules, events] = await Promise.all([
     db.query(
-      `SELECT t.title, t.due_at, t.priority, sub.name AS subject_name,
+      `SELECT t.title, t.description, t.due_at, t.priority, sub.name AS subject_name,
               (tc.task_id IS NOT NULL) AS done
        FROM tasks t
        LEFT JOIN subjects sub ON sub.id=t.subject_id
        LEFT JOIN task_completions tc ON tc.task_id=t.id AND tc.user_id=$2
        WHERE t.class_id=$1 AND (t.is_private = FALSE OR t.created_by=$2)
-       ORDER BY (tc.task_id IS NOT NULL), t.due_at NULLS LAST LIMIT 60`,
+       ORDER BY (tc.task_id IS NOT NULL), t.due_at NULLS LAST`,
       [classId, userId]
     ).then((r) => r.rows),
     db.query(
@@ -565,20 +426,22 @@ async function classSnapshotData(db, classId, userId) {
        FROM subjects s LEFT JOIN notes n ON n.subject_id=s.id
        WHERE s.class_id=$1 GROUP BY s.id, s.name ORDER BY s.name`,
       [classId]
-    ).then((r) => r.rows)
+    ).then((r) => r.rows),
+    db.query(`SELECT s.name AS subject_name, n.title, n.content FROM notes n JOIN subjects s ON s.id=n.subject_id WHERE s.class_id=$1 UNION ALL SELECT s.name,u.title,u.content FROM uploads u JOIN subjects s ON s.id=u.subject_id WHERE u.class_id=$1 ORDER BY subject_name,title`, [classId]).then((r) => r.rows),
+    db.query(`SELECT s.name AS subject_name,t.title FROM topics t JOIN subjects s ON s.id=t.subject_id WHERE s.class_id=$1 ORDER BY s.name,t.sort_order`, [classId]).then((r) => r.rows),
+    db.query(`SELECT ar.status, ar.occurred_on, ats.name, sub.name AS subject_name FROM attendance_records ar JOIN attendance_sessions ats ON ats.id=ar.session_id LEFT JOIN subjects sub ON sub.id=ats.subject_id WHERE ar.user_id=$2 AND ats.class_id=$1 ORDER BY ar.occurred_on DESC`, [classId,userId]).then((r) => r.rows),
+    db.query(`SELECT ts.title,ts.start_date,ts.end_date,e.title AS entry_title,e.subject,e.entry_date,e.start_time,e.end_time,e.room FROM temporary_schedules ts LEFT JOIN temporary_schedule_entries e ON e.schedule_id=ts.id WHERE ts.class_id=$1 AND ts.end_date>=CURRENT_DATE ORDER BY ts.start_date,e.entry_date,e.start_time`, [classId]).then((r) => r.rows),
+    db.query(`SELECT name,event_date,start_time,end_time,sub.name AS subject_name FROM attendance_sessions ats LEFT JOIN subjects sub ON sub.id=ats.subject_id WHERE ats.class_id=$1 AND ats.kind='date' AND ats.event_date>=CURRENT_DATE ORDER BY ats.event_date,ats.start_time`, [classId]).then((r) => r.rows)
   ]);
-  const value = { tasks, schedules, subjects };
-  if (snapshotCache.size >= 500) {
-    const now = Date.now();
-    for (const [k, v] of snapshotCache) if (v.expires <= now) snapshotCache.delete(k);
-  }
-  snapshotCache.set(key, { value, expires: Date.now() + SNAPSHOT_TTL_MS });
+  let classAttendance = [];
+  if (["owner", "admin"].includes(role)) classAttendance = (await db.query(`SELECT ar.status,COUNT(*)::int AS count FROM attendance_records ar JOIN attendance_sessions ats ON ats.id=ar.session_id WHERE ats.class_id=$1 GROUP BY ar.status`, [classId])).rows;
+  const value = { tasks, schedules, subjects, reviewers, topics, attendance, classAttendance, temporarySchedules, events };
   return value;
 }
 
 // Time-sensitive parts (now / in class / next up) are rebuilt per request so a cached snapshot
 // never tells the student the wrong "next" class.
-function snapshotText({ tasks, schedules, subjects }, timeZone) {
+function snapshotText({ tasks, schedules, subjects, reviewers = [], topics = [], attendance = [], classAttendance = [], temporarySchedules = [], events = [] }, timeZone) {
   const { now, ongoing, upcoming } = upcomingSessions(schedules, timeZone);
   const lines = [`Now: ${nowLine(now)}`];
   if (ongoing) {
@@ -589,12 +452,20 @@ function snapshotText({ tasks, schedules, subjects }, timeZone) {
   if (upcoming.length) lines.push(`Upcoming classes (next 7 days):\n${upcoming.map((s) => `- ${describeSession(s)}`).join("\n")}`);
   if (subjects.length) lines.push(`Subjects: ${subjects.map((s) => `${s.name} (${s.reviewers} reviewer${s.reviewers === 1 ? "" : "s"})`).join(", ")}`);
   if (schedules.length) lines.push(`Schedule:\n${schedules.map((s) => `- ${DAY_NAMES[Number(s.day_of_week)]} ${String(s.start_time).slice(0, 5)}-${String(s.end_time).slice(0, 5)} ${s.title}${s.subject_name ? ` (${s.subject_name})` : ""}${s.room ? ` in ${s.room}` : ""}`).join("\n")}`);
-  if (tasks.length) lines.push(`Tasks:\n${tasks.map((t) => `- [${t.done ? "x" : " "}] ${t.title}${t.due_at ? ` — due ${new Date(t.due_at).toISOString().slice(0, 10)}` : ""}${t.subject_name ? ` (${t.subject_name})` : ""}${t.priority && t.priority !== "normal" ? ` [${t.priority}]` : ""}`).join("\n")}`);
+  if (temporarySchedules.length) lines.push(`Active/upcoming temporary schedules:\n${temporarySchedules.map((s) => `- ${s.title} (${String(s.start_date).slice(0,10)} to ${String(s.end_date).slice(0,10)}): ${s.entry_title ? `${String(s.entry_date).slice(0,10)} ${String(s.start_time).slice(0,5)}-${String(s.end_time).slice(0,5)} ${s.entry_title}${s.subject ? ` (${s.subject})` : ""}${s.room ? ` in ${s.room}` : ""}` : "no entries"}`).join("\n")}`);
+  if (events.length) lines.push(`Upcoming dated class events:\n${events.map((e) => `- ${String(e.event_date).slice(0,10)} ${e.name}${e.subject_name ? ` (${e.subject_name})` : ""}${e.start_time ? ` ${String(e.start_time).slice(0,5)}-${String(e.end_time).slice(0,5)}` : ""}`).join("\n")}`);
+  if (tasks.length) lines.push(`Tasks:\n${tasks.map((t) => `- [${t.done ? "x" : " "}] ${t.title}${t.due_at ? ` — due ${new Date(t.due_at).toISOString().slice(0, 10)}` : ""}${t.subject_name ? ` (${t.subject_name})` : ""}${t.priority && t.priority !== "normal" ? ` [${t.priority}]` : ""}${t.description ? ` — ${t.description}` : ""}`).join("\n")}`);
+  const counts = Object.fromEntries(["present","absent","late","excused"].map((status) => [status, attendance.filter((a) => a.status === status).length]));
+  lines.push(`Your attendance: present ${counts.present}, absent ${counts.absent}, late ${counts.late}, excused ${counts.excused}.`);
+  if (attendance.length) lines.push(`Your attendance records:\n${attendance.map((a) => `- ${String(a.occurred_on).slice(0,10)} ${a.status}: ${a.name}${a.subject_name ? ` (${a.subject_name})` : ""}`).join("\n")}`);
+  if (classAttendance.length) lines.push(`Overall class attendance records: ${classAttendance.map((a) => `${a.status} ${a.count}`).join(", ")}`);
+  if (reviewers.length) lines.push(`Reviewer contents:\n${reviewers.map((r) => `- ${r.subject_name} / ${r.title}: ${r.content}`).join("\n")}`);
+  if (topics.length) lines.push(`Topics:\n${topics.map((t) => `- ${t.subject_name}: ${t.title}`).join("\n")}`);
   return lines.join("\n\n");
 }
 
-async function classSnapshot(db, classId, userId, timeZone = "UTC") {
-  return snapshotText(await classSnapshotData(db, classId, userId), timeZone);
+async function classSnapshot(db, classId, userId, timeZone = "UTC", role = "student") {
+  return snapshotText(await classSnapshotData(db, classId, userId, role), timeZone);
 }
 
 router.post("/:classId/assistant", requireClassMember, async (req, res, next) => {
@@ -603,7 +474,7 @@ router.post("/:classId/assistant", requireClassMember, async (req, res, next) =>
     const history = Array.isArray(req.body?.history) ? req.body.history : [];
     const requestedZone = typeof req.body?.timezone === "string" ? req.body.timezone.trim() : "";
     const timeZone = /^[A-Za-z0-9_+\-/]{1,64}$/.test(requestedZone) ? requestedZone : "UTC";
-    const context = await classSnapshot(req.app.locals.db, req.params.classId, req.user.id, timeZone);
+    const context = await classSnapshot(req.app.locals.db, req.params.classId, req.user.id, timeZone, req.membership.role);
     const answer = await askClasslie({ question, history, context });
     res.json({ answer });
   } catch (error) { next(error); }
