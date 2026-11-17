@@ -14,6 +14,7 @@ const app = createApp(pool);
 const port = Number(process.env.PORT || 3000);
 let server;
 pool.query("ALTER TABLE class_members ADD COLUMN IF NOT EXISTS special_key TEXT")
+  .then(() => pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_status BOOLEAN NOT NULL DEFAULT TRUE"))
   .then(() => pool.query(`CREATE TABLE IF NOT EXISTS temporary_schedules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     title VARCHAR(120) NOT NULL, start_date DATE NOT NULL, end_date DATE NOT NULL,
