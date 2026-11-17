@@ -114,8 +114,10 @@ router.patch("/:classId", requireClassMember, async (req, res, next) => {
 
 router.get("/:classId/members", requireClassMember, async (req, res, next) => {
   try {
+    await req.app.locals.db.query("UPDATE users SET last_active_at=NOW() WHERE id=$1", [req.user.id]);
     const result = await req.app.locals.db.query(
-      `SELECT u.id,u.full_name,u.username,u.email,u.avatar_url,u.active_status,cm.role,cm.joined_at
+      `SELECT u.id,u.full_name,u.username,u.email,u.avatar_url,u.active_status,
+              (u.last_active_at >= NOW() - INTERVAL '5 minutes') AS recently_active,cm.role,cm.joined_at
        FROM class_members cm JOIN users u ON u.id=cm.user_id
        WHERE cm.class_id=$1 ORDER BY CASE cm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.full_name`,
       [req.params.classId]
@@ -123,7 +125,7 @@ router.get("/:classId/members", requireClassMember, async (req, res, next) => {
     // Email addresses are only for people who manage the class.
     const canSeeEmail = ["owner", "admin"].includes(req.membership.role);
     const viewerActive = (await req.app.locals.db.query("SELECT active_status FROM users WHERE id=$1", [req.user.id])).rows[0]?.active_status !== false;
-    res.json({ members: result.rows.map(({ email, active_status, ...m }) => ({ ...m, active: viewerActive && active_status !== false, ...(canSeeEmail ? { email } : {}) })) });
+    res.json({ members: result.rows.map(({ email, active_status, recently_active, ...m }) => ({ ...m, active: viewerActive && active_status !== false && recently_active === true, ...(canSeeEmail ? { email } : {}) })) });
   } catch (error) { next(error); }
 });
 

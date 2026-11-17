@@ -799,8 +799,10 @@ async function openProfile() {
           <div>${field("New password", "newPassword", "At least 8 characters", "password", "", 'minlength="8" maxlength="72" autocomplete="new-password"')}</div>
         </div>
       </details>
-      <div class="profile-push"><span>Push notifications</span><label class="push-row"><input type="checkbox" id="push-toggle"> Enable</label></div>
-      <div class="profile-push"><span>Active Status</span><label class="push-row"><input type="checkbox" name="activeStatus" ${u.activeStatus !== false ? "checked" : ""}> On</label></div>
+      <div class="profile-settings-row">
+        <div class="profile-push"><span>Push Notifications</span><label class="push-row"><input type="checkbox" id="push-toggle"><span class="switch-track" aria-hidden="true"></span></label></div>
+        <div class="profile-push"><span>Active Status</span><label class="push-row"><input type="checkbox" name="activeStatus" ${u.activeStatus !== false ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>
+      </div>
       ${u.activeStatus === false ? '<p class="hint">Active Status is off. Other class members cannot see your status, and you cannot see theirs.</p>' : ''}
       <p class="hint" id="push-status">Classlie can notify you shortly before class and when your tasks become overdue.</p>
       <p class="form-error" id="profile-error"></p>
@@ -1820,8 +1822,8 @@ async function showMembers() {
   const rows = members.map((m) => {
     const others = me !== m.id && m.role !== "owner";
     const ownerActions = isOwner() && me === m.id && members.some((member) => member.id !== me) ? `<button class="small-link owner-transfer" data-open-transfer>Transfer ownership</button>` : "";
-    return `<tr><td>${avatarHtml({ fullName: m.full_name || m.username, username: m.username, avatar_url: m.avatar_url }, "avatar-sm")}${escapeHtml(m.full_name)}${me === m.id ? " (you)" : ""}<br><small>@${escapeHtml(m.username)}</small></td><td><span class="pill">${escapeHtml(m.role)}</span></td>
-      <td><span class="member-active ${m.active ? "is-active" : ""}">${m.active ? "● Active" : "Status hidden"}</span><div class="member-actions">${ownerActions}${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
+    return `<tr><td><span class="member-avatar-wrap">${avatarHtml({ fullName: m.full_name || m.username, username: m.username, avatar_url: m.avatar_url }, "avatar-sm")}${m.active ? '<span class="member-online-dot" aria-label="Online"></span>' : ""}</span>${escapeHtml(m.full_name)}${me === m.id ? " (you)" : ""}<br><small>@${escapeHtml(m.username)}</small></td><td><span class="pill">${escapeHtml(m.role)}</span></td>
+      <td><div class="member-actions">${ownerActions}${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
   }).join("");
   openModal("Class members", "CLASS SETTINGS", `${state.user.activeStatus === false ? '<p class="callout">Active Status is turned off. You cannot see other members’ active status indicators.</p>' : ""}<div class="table-wrap"><table class="members-table"><thead><tr><th>Member</th><th>Role</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   $$("[data-member-role]").forEach((b) => b.onclick = async () => {

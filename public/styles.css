@@ -116,6 +116,20 @@ button.class-card:hover{border-color:var(--purple);transform:translateY(-1px)}
 .profile-details summary{cursor:pointer;font-weight:700}
 .profile-details[open] summary{margin-bottom:8px}
 .profile-push{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line);margin-top:10px}
+.profile-settings-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.profile-settings-row .profile-push{min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:14px;margin:10px 0 0;gap:8px}
+.profile-settings-row .push-row{margin:0;flex:0 0 auto}
+.profile-settings-row .push-row input{position:absolute;width:1px;height:1px;margin:0;opacity:0}
+.switch-track{position:relative;display:inline-block;width:42px;height:24px;border-radius:999px;background:#c9ccda;transition:background-color .2s ease;flex:0 0 auto}
+.switch-track::after{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .2s ease}
+.profile-settings-row .push-row input:checked+.switch-track{background:var(--green)}
+.profile-settings-row .push-row input:checked+.switch-track::after{transform:translateX(18px)}
+.profile-settings-row .push-row input:focus-visible+.switch-track{outline:3px solid #6568e855;outline-offset:2px}
+.profile-settings-row .push-row input:disabled+.switch-track{opacity:.55}
+.member-avatar-wrap{position:relative;display:inline-block;vertical-align:middle}
+.member-online-dot{position:absolute;right:7px;bottom:2px;width:10px;height:10px;border-radius:50%;background:#22c55e;border:2px solid var(--card,#fff)}
+.members-table .owner-transfer{display:inline-flex;align-items:center;justify-content:center;padding:5px 9px;border:1px solid color-mix(in srgb,var(--purple) 30%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--lav) 70%,white);font-family:inherit;font-size:.82rem;font-weight:700;line-height:1.2;white-space:nowrap;transition:background-color .2s ease,border-color .2s ease}
+.members-table .owner-transfer:hover{background:var(--lav);border-color:var(--purple)}
 @media(max-width:540px){
   .profile-grid{grid-template-columns:1fr}
   dialog:has(.profile-form){max-height:calc(100vh - 24px)}
