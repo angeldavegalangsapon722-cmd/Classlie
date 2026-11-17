@@ -27,7 +27,7 @@ const PREF_KEY = "classlie_prefs";
 function loadPrefs() { try { return JSON.parse(store.get(PREF_KEY)) || {}; } catch { return {}; } }
 function savePrefs(patch) { store.set(PREF_KEY, JSON.stringify({ ...loadPrefs(), ...patch })); }
 const prefs = loadPrefs();
-const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, taskEditMode: false, selected: { subjects: [], tasks: [] }, selectionActive: false, prevPage: "overview", aiChat: [], aiBusy: false };
+const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, selected: { subjects: [], tasks: [], schedules: [] }, selectionActive: false, prevPage: "overview", aiChat: [], aiBusy: false };
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -309,10 +309,10 @@ async function renderTasks() {
 
   return `${pageHead("Tasks", `<div class="action-row tasks-actions">${actionButton("＋ Add task", "add-item", "tasks")}</div>`)}
     <div class="tasks-content-grid">
-      <div class="panel tasks-list-panel${state.taskEditMode ? " task-editing" : ""}">
+      <div class="panel tasks-list-panel">
         <div class="section-title">
           <h3>Task list</h3>
-          <div class="task-list-tools"><span class="pill">${counts.done}/${counts.all} completed</span>${isAdmin() ? `<button type="button" class="icon-button task-edit-toggle${state.taskEditMode ? " active" : ""}" data-action="toggle-task-edit" aria-label="Toggle task editing" title="Edit tasks">✎</button>` : ""}</div>
+          <span class="pill">${counts.done}/${counts.all} completed</span>
         </div>
         <div class="filters">
           <div class="filter-tabs">${tabs}</div>
@@ -331,21 +331,23 @@ async function renderSchedule() {
   const activeTemp = (tempResult.temporary_schedules || []).find((x) => x.start_date <= todayKey && x.end_date >= todayKey);
   const schedules = activeTemp ? activeTemp.entries.filter((e) => e.entry_date >= todayKey).map((e) => ({ ...e, day_of_week: new Date(`${e.entry_date}T12:00:00`).getDay(), title: e.title, _date: e.entry_date })) : regular;
   const editing = isAdmin() && state.scheduleEdit && !activeTemp;
-  const editBtn = (s) => `<button class="small-link" data-action="edit-item" data-resource="schedules" data-id="${s.id}">Edit</button>`;
+  const editBtn = (s) => `<button type="button" class="schedule-edit-icon" data-action="edit-item" data-resource="schedules" data-id="${s.id}" aria-label="Edit ${escapeHtml(s.title)}" title="Edit schedule"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>`;
   const delBtn = (s) => `<button class="small-link link-danger" data-action="delete-item" data-resource="schedules" data-id="${s.id}">Delete</button>`;
+  const scheduleCardAttrs = (s) => !activeTemp && isAdmin() ? `data-selectable="schedules" data-select-id="${s.id}"` : "";
+  const scheduleSelected = (s) => !activeTemp && state.selected.schedules.includes(s.id);
   const subjectName = (id) => subjects.find((subject) => subject.id === id)?.name || "";
   const subjColor = (s) => subjectAccent(subjectName(s.subject_id));
   const byDay = days.map((name, index) => `<div class="day-column"><h4>${name.toUpperCase()}</h4>${schedules.filter((s) => Number(s.day_of_week) === index).map((s) =>
-    `<div class="schedule-chip" style="--accent:${escapeHtml(subjColor(s))}"><strong>${escapeHtml(s.title)}</strong><span>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</span>${s.room ? `<br><span>${escapeHtml(s.room)}</span>` : ""}${editing ? `<div style="margin-top:7px">${editBtn(s)}</div>` : ""}</div>`).join("") || `<span class="muted" style="font-size:.75rem">No classes</span>`}</div>`).join("");
+    `<div class="schedule-chip${scheduleSelected(s) ? " is-selected" : ""}" ${scheduleCardAttrs(s)} style="--accent:${escapeHtml(subjColor(s))}">${!activeTemp && isAdmin() ? editBtn(s) : ""}<strong>${escapeHtml(s.title)}</strong><span>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</span>${s.room ? `<br><span>${escapeHtml(s.room)}</span>` : ""}</div>`).join("") || `<span class="muted" style="font-size:.75rem">No classes</span>`}</div>`).join("");
   // Agenda: a phone-friendly day-by-day list (today highlighted) shown instead of the week columns on narrow screens. Days with no classes are skipped.
   const todayIdx = new Date().getDay();
   const agenda = days.map((name, index) => {
     const list = schedules.filter((s) => Number(s.day_of_week) === index).sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
     if (!list.length) return "";
     const isToday = index === todayIdx;
-    const items = list.map((s) => `<div class="agenda-item" style="--accent:${escapeHtml(subjColor(s))}">
+    const items = list.map((s) => `<div class="agenda-item${scheduleSelected(s) ? " is-selected" : ""}" ${scheduleCardAttrs(s)} style="--accent:${escapeHtml(subjColor(s))}">${!activeTemp && isAdmin() ? editBtn(s) : ""}
       <div class="agenda-time"><strong>${escapeHtml(fmtTime(s.start_time))}</strong><span>${escapeHtml(fmtTime(s.end_time))}</span></div>
-      <div class="agenda-info"><h5>${escapeHtml(s.title)}</h5>${s.room ? `<span class="agenda-room">${escapeHtml(s.room)}</span>` : ""}${editing ? `<div class="agenda-actions">${editBtn(s)}${delBtn(s)}</div>` : ""}</div></div>`).join("");
+      <div class="agenda-info"><h5>${escapeHtml(s.title)}</h5>${s.room ? `<span class="agenda-room">${escapeHtml(s.room)}</span>` : ""}${editing ? `<div class="agenda-actions">${delBtn(s)}</div>` : ""}</div></div>`).join("");
     return `<div class="agenda-day${isToday ? " today" : ""}">
       <div class="agenda-day-head"><h4>${escapeHtml(name)}</h4>${isToday ? `<span class="pill">Today</span>` : ""}<span class="pill">${list.length} class${list.length === 1 ? "" : "es"}</span></div>
       <div class="agenda-items">${items}</div></div>`;
@@ -1821,7 +1823,7 @@ async function showMembers() {
   const me = state.user.id;
   const rows = members.map((m) => {
     const others = me !== m.id && m.role !== "owner";
-    const ownerActions = isOwner() && me === m.id && members.some((member) => member.id !== me) ? `<button class="small-link owner-transfer" data-open-transfer>Transfer ownership</button>` : "";
+    const ownerActions = isOwner() && me === m.id && members.some((member) => member.id !== me) ? `<button class="small-link owner-transfer" data-open-transfer>Transfer<br>ownership</button>` : "";
     return `<tr><td><span class="member-avatar-wrap">${avatarHtml({ fullName: m.full_name || m.username, username: m.username, avatar_url: m.avatar_url }, "avatar-sm")}${m.active ? '<span class="member-online-dot" aria-label="Online"></span>' : ""}</span>${escapeHtml(m.full_name)}${me === m.id ? " (you)" : ""}<br><small>@${escapeHtml(m.username)}</small></td><td><span class="pill">${escapeHtml(m.role)}</span></td>
       <td><div class="member-actions">${ownerActions}${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
   }).join("");
@@ -1900,7 +1902,6 @@ async function handleAction(action, el) {
   if (action === "add-item") return openItemForm(resource);
   if (action === "scan-schedule") return openScheduleScan();
   if (action === "toggle-schedule-edit") { state.scheduleEdit = !state.scheduleEdit; return renderPage(); }
-  if (action === "toggle-task-edit") { state.taskEditMode = !state.taskEditMode; return renderPage(); }
   if (action === "ai-reviewer") return openReviewerGenerator();
   if (action === "ai-quiz") return openQuizBuilder();
   if (action === "study-plan") return openStudyPlan();
@@ -1938,7 +1939,7 @@ let selectionHoldTimer = null;
 let selectionHoldTarget = null;
 let selectionHoldStart = null;
 let suppressSelectionClick = null;
-function selectedTotal() { return state.selected.subjects.length + state.selected.tasks.length; }
+function selectedTotal() { return state.selected.subjects.length + state.selected.tasks.length + state.selected.schedules.length; }
 function syncSelectionBar() {
   const bar = $("#selection-bar"); if (!bar) return;
   const count = selectedTotal();
@@ -1948,16 +1949,16 @@ function syncSelectionBar() {
   $("#selection-delete").onclick = async () => {
     if (!count || !confirm(`Delete ${count} selected item${count === 1 ? "" : "s"}? This can’t be undone.`)) return;
     try {
-      for (const resource of ["subjects", "tasks"]) {
+      for (const resource of ["subjects", "tasks", "schedules"]) {
         const ids = state.selected[resource];
         if (ids.length) await api(`/class-data/${cid()}/${resource}/bulk-delete`, { method: "POST", body: { ids } });
       }
-      state.selected = { subjects: [], tasks: [] }; state.selectionActive = false;
+      state.selected = { subjects: [], tasks: [], schedules: [] }; state.selectionActive = false;
       toast(`Deleted ${count} item${count === 1 ? "" : "s"}.`); await renderPage();
     } catch (error) { toast(error.message); }
   };
   $("#selection-cancel").onclick = () => {
-    state.selected = { subjects: [], tasks: [] }; state.selectionActive = false;
+    state.selected = { subjects: [], tasks: [], schedules: [] }; state.selectionActive = false;
     $$(".is-selected").forEach((item) => item.classList.remove("is-selected"));
     bar.classList.remove("visible"); bar.setAttribute("aria-hidden", "true");
   };
@@ -1976,12 +1977,12 @@ function wireLongPressSelection(root) {
   root.dataset.selectionBound = "true";
   root.addEventListener("pointerdown", (event) => {
     const card = event.target.closest("[data-selectable]");
-    if (!card || !isAdmin() || event.button > 0 || event.target.closest("input,select,textarea")) return;
+    if (!card || !isAdmin() || event.button > 0 || event.target.closest("input,select,textarea,button,a")) return;
     cancelSelectionHold(); selectionHoldTarget = card; selectionHoldStart = { x: event.clientX, y: event.clientY };
     selectionHoldTimer = setTimeout(() => {
       state.selectionActive = true;
       if (!state.selected[card.dataset.selectable].includes(card.dataset.selectId)) state.selected[card.dataset.selectable].push(card.dataset.selectId);
-      card.classList.add("is-selected"); suppressSelectionClick = card.dataset.selectId;
+      $$(`[data-selectable="${card.dataset.selectable}"][data-select-id="${card.dataset.selectId}"]`, root).forEach((item) => item.classList.add("is-selected")); suppressSelectionClick = card.dataset.selectId;
       syncSelectionBar(); selectionHoldTimer = null;
     }, 450);
   });

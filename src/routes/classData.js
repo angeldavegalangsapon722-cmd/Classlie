@@ -336,7 +336,7 @@ router.delete("/:classId/:resource(subjects|schedules|tasks)/:id", requireClassA
   } catch (error) { next(error); }
 });
 
-router.post("/:classId/:resource(subjects|tasks)/bulk-delete", requireClassAdmin, async (req, res, next) => {
+router.post("/:classId/:resource(subjects|tasks|schedules)/bulk-delete", requireClassAdmin, async (req, res, next) => {
   try {
     const cfg = resourceFor(req, res); if (!cfg) return;
     const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.filter(isUuid))].slice(0, 200) : [];
