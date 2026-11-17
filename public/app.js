@@ -27,7 +27,7 @@ const PREF_KEY = "classlie_prefs";
 function loadPrefs() { try { return JSON.parse(store.get(PREF_KEY)) || {}; } catch { return {}; } }
 function savePrefs(patch) { store.set(PREF_KEY, JSON.stringify({ ...loadPrefs(), ...patch })); }
 const prefs = loadPrefs();
-const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, selected: { subjects: [], tasks: [], schedules: [] }, selectionActive: false, prevPage: "overview", aiChat: [], aiBusy: false };
+const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, selected: { subjects: [], tasks: [], schedules: [] }, selectionActive: false, prevPage: "overview", aiChat: [], aiBusy: false };
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -83,8 +83,8 @@ function taskCard(task, compact = false) {
   const due = task.due_at ? `<span class="task-due">${escapeHtml(fmtDate(task.due_at))}</span>` : "";
   const selected = state.selected.tasks.includes(task.id);
   const selectAttrs = isAdmin() && !task.is_private ? `data-selectable="tasks" data-select-id="${escapeHtml(task.id)}"` : "";
-  const controls = isAdmin() && !task.is_private ? `<div class="inline-actions task-admin-actions"><button class="small-link" data-action="edit-item" data-resource="tasks" data-id="${task.id}">Edit</button><button class="small-link link-danger" data-action="delete-item" data-resource="tasks" data-id="${task.id}">Delete</button></div>` : "";
-  return `<article class="item-card task-card${compact ? " compact" : ""}${selected ? " is-selected" : ""}" ${selectAttrs}><label class="task-check"><input class="task-toggle" type="checkbox" data-id="${escapeHtml(task.id)}" ${task.completed ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} complete"></label><div class="item-main"><h3 class="task-title${task.completed ? " done" : ""}">${escapeHtml(task.title)}</h3>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}${due}${controls}</div>${priorityDot(task.priority)}</article>`;
+  const editButton = isAdmin() && !task.is_private ? `<button type="button" class="task-edit-icon" data-action="edit-item" data-resource="tasks" data-id="${escapeHtml(task.id)}" aria-label="Edit ${escapeHtml(task.title)}" title="Edit task"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>` : "";
+  return `<article class="item-card task-card${compact ? " compact" : ""}${selected ? " is-selected" : ""}" ${selectAttrs}><label class="task-check"><input class="task-toggle" type="checkbox" data-id="${escapeHtml(task.id)}" ${task.completed ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} complete"></label><div class="item-main"><div class="task-title-row"><h3 class="task-title${task.completed ? " done" : ""}">${escapeHtml(task.title)}</h3>${editButton}</div>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}${due}</div>${priorityDot(task.priority)}</article>`;
 }
 function minutesUntilNext(schedule) {
   const now = new Date();
@@ -330,9 +330,7 @@ async function renderSchedule() {
   const todayKey = localDateStr(new Date());
   const activeTemp = (tempResult.temporary_schedules || []).find((x) => x.start_date <= todayKey && x.end_date >= todayKey);
   const schedules = activeTemp ? activeTemp.entries.filter((e) => e.entry_date >= todayKey).map((e) => ({ ...e, day_of_week: new Date(`${e.entry_date}T12:00:00`).getDay(), title: e.title, _date: e.entry_date })) : regular;
-  const editing = isAdmin() && state.scheduleEdit && !activeTemp;
   const editBtn = (s) => `<button type="button" class="schedule-edit-icon" data-action="edit-item" data-resource="schedules" data-id="${s.id}" aria-label="Edit ${escapeHtml(s.title)}" title="Edit schedule"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>`;
-  const delBtn = (s) => `<button class="small-link link-danger" data-action="delete-item" data-resource="schedules" data-id="${s.id}">Delete</button>`;
   const scheduleCardAttrs = (s) => !activeTemp && isAdmin() ? `data-selectable="schedules" data-select-id="${s.id}"` : "";
   const scheduleSelected = (s) => !activeTemp && state.selected.schedules.includes(s.id);
   const subjectName = (id) => subjects.find((subject) => subject.id === id)?.name || "";
@@ -347,16 +345,16 @@ async function renderSchedule() {
     const isToday = index === todayIdx;
     const items = list.map((s) => `<div class="agenda-item${scheduleSelected(s) ? " is-selected" : ""}" ${scheduleCardAttrs(s)} style="--accent:${escapeHtml(subjColor(s))}">${!activeTemp && isAdmin() ? editBtn(s) : ""}
       <div class="agenda-time"><strong>${escapeHtml(fmtTime(s.start_time))}</strong><span>${escapeHtml(fmtTime(s.end_time))}</span></div>
-      <div class="agenda-info"><h5>${escapeHtml(s.title)}</h5>${s.room ? `<span class="agenda-room">${escapeHtml(s.room)}</span>` : ""}${editing ? `<div class="agenda-actions">${delBtn(s)}</div>` : ""}</div></div>`).join("");
+      <div class="agenda-info"><h5>${escapeHtml(s.title)}</h5>${s.room ? `<span class="agenda-room">${escapeHtml(s.room)}</span>` : ""}</div></div>`).join("");
     return `<div class="agenda-day${isToday ? " today" : ""}">
       <div class="agenda-day-head"><h4>${escapeHtml(name)}</h4>${isToday ? `<span class="pill">Today</span>` : ""}<span class="pill">${list.length} class${list.length === 1 ? "" : "es"}</span></div>
       <div class="agenda-items">${items}</div></div>`;
   }).join("");
-  const rows = schedules.map((s) => `<tr><td>${s._date || days[s.day_of_week]}</td><td>${escapeHtml(s.title)}${s.subject ? ` · ${escapeHtml(s.subject)}` : ""}</td><td>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</td><td>${escapeHtml(s.room || "—")}</td><td>${editing ? `${editBtn(s)} ${delBtn(s)}` : ""}</td></tr>`).join("");
-  const actions = isAdmin() ? `<div class="action-row schedule-actions"><button type="button" class="${state.scheduleEdit ? "primary" : "secondary"}" data-action="toggle-schedule-edit">${state.scheduleEdit ? "✓ Done" : "✎ Edit"}</button>${actionButton("✦ Import schedule", "scan-schedule", "", true)}${actionButton("＋ Add schedule", "add-item", "schedules")}</div>` : "";
+  const rows = schedules.map((s) => `<tr><td>${s._date || days[s.day_of_week]}</td><td>${escapeHtml(s.title)}${s.subject ? ` · ${escapeHtml(s.subject)}` : ""}</td><td>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</td><td>${escapeHtml(s.room || "—")}</td></tr>`).join("");
+  const actions = isAdmin() ? `<div class="action-row schedule-actions">${actionButton("✦ Import schedule", "scan-schedule", "", true)}${actionButton("＋ Add schedule", "add-item", "schedules")}</div>` : "";
   return `${pageHead(`Schedule${activeTemp ? ` · ${activeTemp.title}` : ""}`, actions)}
   <div class="panel"><div class="section-title"><h3>This week</h3><span class="pill">${schedules.length} entries</span></div>${schedules.length ? `<div class="week-grid">${byDay}</div><div class="agenda">${agenda}</div>` : emptyState("No schedule yet", "An admin can add a subject, day, start time, end time, and room.")}</div>
-  ${schedules.length ? `<div class="panel schedule-table" style="margin-top:17px"><div class="section-title"><h3>Schedule entries</h3></div><div class="table-wrap"><table><thead><tr><th>Day</th><th>Class / subject</th><th>Time</th><th>Room</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}`;
+  ${schedules.length ? `<div class="panel schedule-table" style="margin-top:17px"><div class="section-title"><h3>Schedule entries</h3></div><div class="table-wrap"><table><thead><tr><th>Day</th><th>Class / subject</th><th>Time</th><th>Room</th></tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}`;
 }
 // ---- AI schedule import (admin): scan a photo/text, then review before saving ----
 function openScheduleScan() {
@@ -1901,7 +1899,6 @@ async function handleAction(action, el) {
   if (action === "open-subject") return openSubject(id);
   if (action === "add-item") return openItemForm(resource);
   if (action === "scan-schedule") return openScheduleScan();
-  if (action === "toggle-schedule-edit") { state.scheduleEdit = !state.scheduleEdit; return renderPage(); }
   if (action === "ai-reviewer") return openReviewerGenerator();
   if (action === "ai-quiz") return openQuizBuilder();
   if (action === "study-plan") return openStudyPlan();
@@ -1943,6 +1940,7 @@ function selectedTotal() { return state.selected.subjects.length + state.selecte
 function syncSelectionBar() {
   const bar = $("#selection-bar"); if (!bar) return;
   const count = selectedTotal();
+  $("#page-content")?.classList.toggle("has-schedule-selection", state.selected.schedules.length > 0);
   bar.classList.toggle("visible", count > 0);
   bar.setAttribute("aria-hidden", String(count === 0));
   $("#selection-count").textContent = `${count} selected`;
@@ -1953,22 +1951,29 @@ function syncSelectionBar() {
         const ids = state.selected[resource];
         if (ids.length) await api(`/class-data/${cid()}/${resource}/bulk-delete`, { method: "POST", body: { ids } });
       }
-      state.selected = { subjects: [], tasks: [], schedules: [] }; state.selectionActive = false;
+      clearSelectionMode();
       toast(`Deleted ${count} item${count === 1 ? "" : "s"}.`); await renderPage();
     } catch (error) { toast(error.message); }
   };
   $("#selection-cancel").onclick = () => {
-    state.selected = { subjects: [], tasks: [], schedules: [] }; state.selectionActive = false;
-    $$(".is-selected").forEach((item) => item.classList.remove("is-selected"));
-    bar.classList.remove("visible"); bar.setAttribute("aria-hidden", "true");
+    clearSelectionMode();
   };
 }
 function cancelSelectionHold() { clearTimeout(selectionHoldTimer); selectionHoldTimer = null; selectionHoldTarget = null; selectionHoldStart = null; }
+function clearSelectionMode() {
+  state.selected = { subjects: [], tasks: [], schedules: [] };
+  state.selectionActive = false;
+  $$(".is-selected").forEach((item) => item.classList.remove("is-selected"));
+  const bar = $("#selection-bar");
+  if (bar) { bar.classList.remove("visible"); bar.setAttribute("aria-hidden", "true"); }
+  $("#page-content")?.classList.remove("has-schedule-selection");
+  if ($("#selection-count")) $("#selection-count").textContent = "0 selected";
+}
 function toggleSelectedItem(element) {
   const kind = element.dataset.selectable, id = element.dataset.selectId;
   if (!state.selected[kind]) state.selected[kind] = [];
   state.selected[kind] = state.selected[kind].includes(id) ? state.selected[kind].filter((x) => x !== id) : [...state.selected[kind], id];
-  element.classList.toggle("is-selected", state.selected[kind].includes(id));
+  $$(`[data-selectable="${kind}"][data-select-id="${id}"]`).forEach((item) => item.classList.toggle("is-selected", state.selected[kind].includes(id)));
   if (!selectedTotal()) state.selectionActive = false;
   syncSelectionBar();
 }
@@ -1980,6 +1985,12 @@ function wireLongPressSelection(root) {
     if (!card || !isAdmin() || event.button > 0 || event.target.closest("input,select,textarea,button,a")) return;
     cancelSelectionHold(); selectionHoldTarget = card; selectionHoldStart = { x: event.clientX, y: event.clientY };
     selectionHoldTimer = setTimeout(() => {
+      if (state.selectionActive) {
+        clearSelectionMode();
+        suppressSelectionClick = card.dataset.selectId;
+        selectionHoldTimer = null;
+        return;
+      }
       state.selectionActive = true;
       if (!state.selected[card.dataset.selectable].includes(card.dataset.selectId)) state.selected[card.dataset.selectable].push(card.dataset.selectId);
       $$(`[data-selectable="${card.dataset.selectable}"][data-select-id="${card.dataset.selectId}"]`, root).forEach((item) => item.classList.add("is-selected")); suppressSelectionClick = card.dataset.selectId;

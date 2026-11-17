@@ -128,9 +128,9 @@ button.class-card:hover{border-color:var(--purple);transform:translateY(-1px)}
 .profile-settings-row .push-row input:disabled+.switch-track{opacity:.55}
 .member-avatar-wrap{position:relative;display:inline-block;vertical-align:middle}
 .member-online-dot{position:absolute;right:7px;bottom:2px;width:10px;height:10px;border-radius:50%;background:#22c55e;border:2px solid var(--card,#fff)}
-.members-table .owner-transfer{display:inline-block;padding:5px 9px;border:1px solid color-mix(in srgb,var(--purple) 30%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--lav) 70%,white);font-family:inherit;font-size:.82rem;font-weight:700;line-height:1.2;text-align:center;vertical-align:middle;white-space:normal;transition:background-color .2s ease,border-color .2s ease}
+.members-table .owner-transfer{display:inline-block;padding:5px 9px;border:1px solid color-mix(in srgb,var(--purple) 30%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--lav) 70%,white);font-family:inherit;font-size:.82rem;font-weight:700;line-height:1.2;text-align:center;vertical-align:middle;white-space:normal;transition:background-color .2s ease,border-color .2s ease}
 .members-table .owner-transfer:hover{background:var(--lav);border-color:var(--purple)}
-@media(max-width:900px){.agenda-item .schedule-edit-icon{top:50%;transform:translateY(-50%)}}
+@media(max-width:900px){.agenda-item .schedule-edit-icon{top:50%;transform:translateY(-50%) scale(.85)}.has-schedule-selection .agenda-item .schedule-edit-icon{transform:translateY(-50%) scale(1)}}
 @media(max-width:540px){
   .profile-grid{grid-template-columns:1fr}
   dialog:has(.profile-form){max-height:calc(100vh - 24px)}
@@ -1082,8 +1082,12 @@ button.is-loading,button:disabled{cursor:wait;opacity:.65}
 .select-item{width:20px;height:20px;flex:0 0 auto;accent-color:var(--purple)}
 .subject-card[data-selectable],.task-card[data-selectable],.schedule-chip[data-selectable],.agenda-item[data-selectable]{user-select:none;-webkit-user-select:none;touch-action:pan-y}
 .subject-card.is-selected,.task-card.is-selected,.schedule-chip.is-selected,.agenda-item.is-selected{border-color:var(--purple);box-shadow:0 0 0 3px color-mix(in srgb,var(--purple) 24%,transparent),0 10px 28px color-mix(in srgb,var(--purple) 23%,transparent)}
-.task-admin-actions{display:flex;margin-top:9px}
-.schedule-edit-icon{position:absolute;z-index:2;top:7px;right:7px;display:grid;place-items:center;width:28px;height:28px;padding:5px;border:1px solid var(--line);border-radius:9px;background:#ffffffd9;color:var(--purple)}
+.task-title-row{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.task-title-row .task-title{flex:1;min-width:0}
+.task-edit-icon{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;padding:5px;margin-top:-5px;border:1px solid var(--line);border-radius:9px;background:#ffffffd9;color:var(--purple)}
+.task-edit-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.schedule-edit-icon{position:absolute;z-index:2;top:7px;right:7px;display:grid;place-items:center;width:28px;height:28px;padding:5px;border:1px solid var(--line);border-radius:9px;background:#ffffffd9;color:var(--purple);opacity:0;transform:scale(.85);pointer-events:none;transition:opacity .2s ease,transform .2s ease}
+.has-schedule-selection .schedule-edit-icon{opacity:1;transform:scale(1);pointer-events:auto}
 .schedule-edit-icon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .schedule-chip[data-selectable]{padding-right:40px}
 .agenda-item[data-selectable]{padding-right:44px}
