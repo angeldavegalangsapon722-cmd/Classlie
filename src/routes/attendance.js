@@ -227,12 +227,12 @@ router.get("/:classId/attendance/summary", requireClassMember, async (req, res, 
     )).rows[0];
     if (!member) return res.status(404).json({ error: "That member is not in this class." });
     const rows = (await db.query(
-      `SELECT sub.id AS subject_id, sub.name AS subject_name, r.status, COUNT(*)::int AS n
+      `SELECT sub.id AS subject_id, COALESCE(sub.name,s.name) AS subject_name, r.status, COUNT(*)::int AS n
        FROM attendance_records r
        JOIN attendance_sessions s ON s.id = r.session_id
        LEFT JOIN subjects sub ON sub.id = s.subject_id
        WHERE s.class_id = $1 AND r.user_id = $2
-       GROUP BY sub.id, sub.name, r.status`,
+       GROUP BY sub.id, COALESCE(sub.name,s.name), r.status`,
       [req.params.classId, userId]
     )).rows;
     const blank = () => ({ present: 0, late: 0, absent: 0, excused: 0 });

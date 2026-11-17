@@ -47,6 +47,9 @@ async function callModel(parts, { schema, temperature = 0.2 } = {}) {
 const SCHEDULE_SCHEMA = {
   type: "object",
   properties: {
+    schedule_title: { type: "string" },
+    start_date: { type: "string" },
+    end_date: { type: "string" },
     entries: {
       type: "array",
       items: {
@@ -67,7 +70,7 @@ const SCHEDULE_SCHEMA = {
 };
 
 const SCHEDULE_INSTRUCTIONS = `You extract a class schedule from a student's timetable, given as an image or text.
-Return every recurring class meeting as one entry:
+Return every recurring class meeting as one entry. If the source explicitly names a temporary schedule or date range, also return schedule_title, start_date, and end_date (dates as YYYY-MM-DD); otherwise return empty strings for those fields.
 - title: the class or subject name exactly as written.
 - subject: a short subject name to group by; reuse the title if unsure.
 - day: one full English weekday (Sunday, Monday, ... Saturday). If a row lists several days (e.g. MWF), emit one entry per day.
@@ -80,7 +83,7 @@ async function scanSchedule({ text, image }) {
   if (text) parts.push({ text: `Schedule text:\n${text}` });
   if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.buffer.toString("base64") } });
   const parsed = await callModel(parts, { schema: SCHEDULE_SCHEMA });
-  return Array.isArray(parsed?.entries) ? parsed.entries : [];
+  return { entries: Array.isArray(parsed?.entries) ? parsed.entries : [], schedule_title: parsed?.schedule_title || "", start_date: parsed?.start_date || "", end_date: parsed?.end_date || "" };
 }
 
 /* ---------------- reviewer generation ---------------- */

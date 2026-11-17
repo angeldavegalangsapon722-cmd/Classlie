@@ -403,9 +403,15 @@ router.post("/:classId/schedules/scan", requireClassAdmin, scanUpload.single("im
     const text = cleanText(req.body?.text, "Schedule text", 8000);
     if (!text && !req.file) throw badRequest("Attach a schedule photo or paste the schedule text.");
     if (req.file && !req.file.mimetype.startsWith("image/")) throw badRequest("Please upload an image of the schedule.");
-    const raw = await scanSchedule({ text, image: req.file ? { mimeType: req.file.mimetype, buffer: req.file.buffer } : null });
+    const scan = await scanSchedule({ text, image: req.file ? { mimeType: req.file.mimetype, buffer: req.file.buffer } : null });
+    const raw = Array.isArray(scan) ? scan : scan.entries;
     const entries = raw.map(normalizeScannedEntry).filter((entry) => entry.title);
-    res.json({ entries, skipped: raw.length - entries.length });
+    const isoDate = (value) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return "";
+      const parsed = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : "";
+    };
+    res.json({ entries, schedule: { title: cleanText(scan.schedule_title, "Schedule title", 120) || "", start_date: isoDate(scan.start_date), end_date: isoDate(scan.end_date) }, skipped: raw.length - entries.length });
   } catch (error) { next(error); }
 });
 

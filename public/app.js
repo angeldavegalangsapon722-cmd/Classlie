@@ -27,7 +27,7 @@ const PREF_KEY = "classlie_prefs";
 function loadPrefs() { try { return JSON.parse(store.get(PREF_KEY)) || {}; } catch { return {}; } }
 function savePrefs(patch) { store.set(PREF_KEY, JSON.stringify({ ...loadPrefs(), ...patch })); }
 const prefs = loadPrefs();
-const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, selectMode: {}, selected: {}, prevPage: "overview", aiChat: [], aiBusy: false };
+const cachedUserInit=getCachedUser(); const state = { token: getToken(), user: cachedUserInit, classes: [], activeClass: null, page: ["overview","schedule","tasks","notes","attendance","ai"].includes(prefs.page) ? prefs.page : "overview", authMode: "login", cache: {}, tasksFilter: prefs.tasksFilter || "all", taskSort: prefs.taskSort || "due", calDate: prefs.calDate || null, classMenuOpen: false, resetToken: null, scheduleEdit: false, taskEditMode: false, selected: { subjects: [], tasks: [] }, selectionActive: false, prevPage: "overview", aiChat: [], aiBusy: false };
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -81,9 +81,10 @@ function subjColor(item) { return subjectAccent(item.subject_name || item.title 
 function trackEvent() { /* Analytics is optional; keep core actions independent of it. */ }
 function taskCard(task, compact = false) {
   const due = task.due_at ? `<span class="task-due">${escapeHtml(fmtDate(task.due_at))}</span>` : "";
-  const select = isAdmin() && state.selectMode.tasks && !task.is_private ? `<input class="check select-item" type="checkbox" data-select-id="${task.id}" ${state.selected.tasks?.includes(task.id) ? "checked" : ""} aria-label="Select task">` : "";
-  const controls = isAdmin() && !task.is_private ? `<div class="inline-actions"><button class="small-link" data-action="edit-item" data-resource="tasks" data-id="${task.id}">Edit</button><button class="small-link link-danger" data-action="delete-item" data-resource="tasks" data-id="${task.id}">Delete</button></div>` : "";
-  return `<article class="item-card task-card${compact ? " compact" : ""}">${select}<label class="task-check"><input class="task-toggle" type="checkbox" data-id="${escapeHtml(task.id)}" ${task.completed ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} complete"></label><div class="item-main"><h3 class="task-title${task.completed ? " done" : ""}">${escapeHtml(task.title)}</h3>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}${due}${controls}</div>${priorityDot(task.priority)}</article>`;
+  const selected = state.selected.tasks.includes(task.id);
+  const selectAttrs = isAdmin() && !task.is_private ? `data-selectable="tasks" data-select-id="${escapeHtml(task.id)}"` : "";
+  const controls = isAdmin() && !task.is_private ? `<div class="inline-actions task-admin-actions"><button class="small-link" data-action="edit-item" data-resource="tasks" data-id="${task.id}">Edit</button><button class="small-link link-danger" data-action="delete-item" data-resource="tasks" data-id="${task.id}">Delete</button></div>` : "";
+  return `<article class="item-card task-card${compact ? " compact" : ""}${selected ? " is-selected" : ""}" ${selectAttrs}><label class="task-check"><input class="task-toggle" type="checkbox" data-id="${escapeHtml(task.id)}" ${task.completed ? "checked" : ""} aria-label="Mark ${escapeHtml(task.title)} complete"></label><div class="item-main"><h3 class="task-title${task.completed ? " done" : ""}">${escapeHtml(task.title)}</h3>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}${due}${controls}</div>${priorityDot(task.priority)}</article>`;
 }
 function minutesUntilNext(schedule) {
   const now = new Date();
@@ -306,14 +307,12 @@ async function renderTasks() {
       ? "Add a task for the class, or a private one only you can see."
       : "Nothing matches this filter.");
 
-  const selectedCount = state.selected.tasks?.length || 0;
-  const selectBar = isAdmin() ? `<button class="secondary" data-action="toggle-select" data-resource="tasks">${state.selectMode.tasks ? "Cancel select" : "Select"}</button>${state.selectMode.tasks ? `<button class="small-link" data-action="select-all" data-resource="tasks">Select all</button><button class="danger-button" data-action="bulk-delete" data-resource="tasks" ${selectedCount ? "" : "disabled"}>Delete Selected (${selectedCount})</button>` : ""}` : "";
-  return `${pageHead("Tasks", `<div class="action-row tasks-actions">${selectBar}${actionButton("＋ Add task", "add-item", "tasks")}</div>`)}
+  return `${pageHead("Tasks", `<div class="action-row tasks-actions">${actionButton("＋ Add task", "add-item", "tasks")}</div>`)}
     <div class="tasks-content-grid">
-      <div class="panel tasks-list-panel">
+      <div class="panel tasks-list-panel${state.taskEditMode ? " task-editing" : ""}">
         <div class="section-title">
           <h3>Task list</h3>
-          <span class="pill">${counts.done}/${counts.all} completed</span>
+          <div class="task-list-tools"><span class="pill">${counts.done}/${counts.all} completed</span>${isAdmin() ? `<button type="button" class="icon-button task-edit-toggle${state.taskEditMode ? " active" : ""}" data-action="toggle-task-edit" aria-label="Toggle task editing" title="Edit tasks">✎</button>` : ""}</div>
         </div>
         <div class="filters">
           <div class="filter-tabs">${tabs}</div>
@@ -352,39 +351,22 @@ async function renderSchedule() {
       <div class="agenda-items">${items}</div></div>`;
   }).join("");
   const rows = schedules.map((s) => `<tr><td>${s._date || days[s.day_of_week]}</td><td>${escapeHtml(s.title)}${s.subject ? ` · ${escapeHtml(s.subject)}` : ""}</td><td>${fmtTime(s.start_time)}–${fmtTime(s.end_time)}</td><td>${escapeHtml(s.room || "—")}</td><td>${editing ? `${editBtn(s)} ${delBtn(s)}` : ""}</td></tr>`).join("");
-  const actions = isAdmin() ? `<div class="action-row schedule-actions"><button type="button" class="${state.scheduleEdit ? "primary" : "secondary"}" data-action="toggle-schedule-edit">${state.scheduleEdit ? "✓ Done" : "✎ Edit"}</button><button type="button" class="secondary" data-action="add-temp-schedule">＋ Temporary schedule</button>${actionButton("✦ Import schedule", "scan-schedule", "", true)}${actionButton("＋ Add schedule", "add-item", "schedules")}</div>` : "";
+  const actions = isAdmin() ? `<div class="action-row schedule-actions"><button type="button" class="${state.scheduleEdit ? "primary" : "secondary"}" data-action="toggle-schedule-edit">${state.scheduleEdit ? "✓ Done" : "✎ Edit"}</button>${actionButton("✦ Import schedule", "scan-schedule", "", true)}${actionButton("＋ Add schedule", "add-item", "schedules")}</div>` : "";
   return `${pageHead(`Schedule${activeTemp ? ` · ${activeTemp.title}` : ""}`, actions)}
   <div class="panel"><div class="section-title"><h3>This week</h3><span class="pill">${schedules.length} entries</span></div>${schedules.length ? `<div class="week-grid">${byDay}</div><div class="agenda">${agenda}</div>` : emptyState("No schedule yet", "An admin can add a subject, day, start time, end time, and room.")}</div>
   ${schedules.length ? `<div class="panel schedule-table" style="margin-top:17px"><div class="section-title"><h3>Schedule entries</h3></div><div class="table-wrap"><table><thead><tr><th>Day</th><th>Class / subject</th><th>Time</th><th>Room</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>` : ""}`;
 }
-async function createTemporarySchedule() {
-  const today = localDateStr(new Date());
-  openModal("Temporary schedule", "EXAM WEEK", `<div class="ai-form">
-    <label>Title<input id="tmp-title" required maxlength="120" placeholder="Exam Week"></label>
-    <div class="two-col"><label>Start date<input id="tmp-start" type="date" value="${today}" required></label><label>End date<input id="tmp-end" type="date" value="${today}" required></label></div>
-    <label>Entry title<input id="tmp-entry" required maxlength="160" placeholder="Mathematics exam"></label>
-    <label>Subject<input id="tmp-subject" maxlength="120"></label><label>Date<input id="tmp-date" type="date" value="${today}" required></label>
-    <div class="two-col"><label>Start time<input id="tmp-from" type="time" value="08:00" required></label><label>End time<input id="tmp-to" type="time" value="09:00" required></label></div>
-    <label>Room<input id="tmp-room" maxlength="100"></label><p class="form-error" id="tmp-error"></p>
-    <div class="modal-actions"><button class="secondary" id="tmp-cancel" type="button">Cancel</button><button class="primary" id="tmp-save" type="button">Save schedule</button></div></div>`);
-  $("#tmp-cancel").onclick = closeModal;
-  $("#tmp-save").onclick = async () => {
-    const start_date = $("#tmp-start").value, end_date = $("#tmp-end").value;
-    const entry_date = $("#tmp-date").value;
-    if (!start_date || !end_date || end_date < start_date || entry_date < start_date || entry_date > end_date) return $("#tmp-error").textContent = "Entry date must fall within the schedule dates.";
-    try { await api(`/class-data/${cid()}/temporary-schedules`, { method: "POST", body: { title: $("#tmp-title").value, start_date, end_date, entries: [{ title: $("#tmp-entry").value, subject: $("#tmp-subject").value, entry_date, start_time: $("#tmp-from").value, end_time: $("#tmp-to").value, room: $("#tmp-room").value }] } }); closeModal(); toast("Temporary schedule saved."); await renderPage(); }
-    catch (e) { $("#tmp-error").textContent = e.message; }
-  };
-}
-
 // ---- AI schedule import (admin): scan a photo/text, then review before saving ----
 function openScheduleScan() {
   openModal("Import a schedule", "AI SCAN", `
     <label>Schedule photo<input type="file" id="scan-image" accept="image/*"></label>
     <label>…or paste the schedule text<textarea id="scan-text" maxlength="8000" placeholder="e.g. Monday 7:30–9:00 Object-Oriented Programming, Lab 2"></textarea></label>
+    <label class="check-row"><input type="checkbox" id="scan-temporary"> Temporary schedule</label>
+    <div id="scan-temporary-fields" hidden><label>Schedule label<input id="scan-temp-title" maxlength="120" placeholder="Exam Week"></label><div class="two-col"><label>Start date<input id="scan-temp-start" type="date" value="${localDateStr(new Date())}"></label><label>End date<input id="scan-temp-end" type="date" value="${localDateStr(new Date())}"></label></div></div>
     <p class="form-error" id="scan-error" role="alert"></p>
     <div class="modal-actions"><button type="button" class="secondary" id="scan-cancel">Cancel</button><button type="button" class="primary" id="scan-go">Scan with AI</button></div>`);
   $("#scan-cancel").onclick = closeModal;
+  $("#scan-temporary").onchange = (event) => { $("#scan-temporary-fields").hidden = !event.target.checked; };
   $("#scan-go").onclick = async () => {
     const button = $("#scan-go");
     const file = $("#scan-image").files[0];
@@ -396,8 +378,9 @@ function openScheduleScan() {
       const form = new FormData();
       if (file) form.append("image", file);
       if (text) form.append("text", text);
-      const { entries, skipped } = await apiUpload(`/class-data/${cid()}/schedules/scan`, form);
-      showScheduleScanPreview(entries, skipped);
+      const { entries, schedule = {}, skipped } = await apiUpload(`/class-data/${cid()}/schedules/scan`, form);
+      const detectedDates = !!(schedule.start_date && schedule.end_date);
+      showScheduleScanPreview(entries, skipped, { temporary: $("#scan-temporary").checked || detectedDates, title: schedule.title || $("#scan-temp-title").value, start: schedule.start_date || $("#scan-temp-start").value, end: schedule.end_date || $("#scan-temp-end").value });
     } catch (error) {
       $("#scan-error").textContent = error.message;
       button.disabled = false;
@@ -406,7 +389,7 @@ function openScheduleScan() {
   };
 }
 
-function showScheduleScanPreview(entries, skipped) {
+function showScheduleScanPreview(entries, skipped, temporary = {}) {
   if (!entries.length) {
     openModal("Import a schedule", "AI SCAN", `<p class="hint">The scan didn't find any class entries. Try a clearer photo, or paste the schedule as text.</p>
       <div class="modal-actions"><button type="button" class="secondary" id="scan-back">Try again</button></div>`);
@@ -424,10 +407,13 @@ function showScheduleScanPreview(entries, skipped) {
   </tr>`).join("");
   const note = `<p class="hint">Found ${entries.length} entr${entries.length === 1 ? "y" : "ies"}${skipped ? ` (${skipped} unreadable row${skipped === 1 ? "" : "s"} skipped)` : ""}. Edit anything that's wrong, untick rows you don't want, then import. New subject names are added automatically.</p>`;
   openModal("Review scanned schedule", "AI SCAN", `${note}
+    <label class="check-row"><input type="checkbox" id="scan-temporary" ${temporary.temporary ? "checked" : ""}> Temporary schedule</label>
+    <div id="scan-temporary-fields" ${temporary.temporary ? "" : "hidden"}><label>Schedule label<input id="scan-temp-title" maxlength="120" placeholder="Exam Week" value="${escapeHtml(temporary.title || "")}"></label><div class="two-col"><label>Start date<input id="scan-temp-start" type="date" value="${escapeHtml(temporary.start || localDateStr(new Date()))}"></label><label>End date<input id="scan-temp-end" type="date" value="${escapeHtml(temporary.end || localDateStr(new Date()))}"></label></div></div>
     <div class="table-wrap"><table class="scan-table"><thead><tr><th></th><th>Title</th><th>Subject</th><th>Day</th><th>Start</th><th>End</th><th>Room</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="form-error" id="scan-error" role="alert"></p>
     <div class="modal-actions"><button type="button" class="secondary" id="scan-back">Back</button><button type="button" class="primary" id="scan-save">Import selected</button></div>`);
   $("#scan-back").onclick = openScheduleScan;
+  $("#scan-temporary").onchange = (event) => { $("#scan-temporary-fields").hidden = !event.target.checked; };
   $("#scan-save").onclick = async () => {
     const body = $("#modal-body");
     const payload = $$("tbody tr", body).filter((tr) => $(".scan-include", tr).checked).map((tr) => ({
@@ -442,7 +428,25 @@ function showScheduleScanPreview(entries, skipped) {
     const button = $("#scan-save");
     button.disabled = true;
     try {
-      const { imported } = await api(`/class-data/${cid()}/schedules/import`, { method: "POST", body: { entries: payload } });
+      let imported;
+      if ($("#scan-temporary").checked) {
+        const start = $("#scan-temp-start").value, end = $("#scan-temp-end").value, label = $("#scan-temp-title").value.trim();
+        if (!label || !start || !end || end < start) throw new Error("Enter a schedule label and valid date range.");
+        const entries = [];
+        for (const entry of payload) {
+          const date = new Date(`${start}T12:00:00`);
+          while (localDateStr(date) <= end) {
+            if (date.getDay() === Number(entry.day)) entries.push({ title: entry.title, subject: entry.subject, entry_date: localDateStr(date), start_time: entry.start_time, end_time: entry.end_time, room: entry.room });
+            date.setDate(date.getDate() + 1);
+          }
+        }
+        if (!entries.length) throw new Error("No scanned weekdays fall within the selected date range.");
+        await api(`/class-data/${cid()}/temporary-schedules`, { method: "POST", body: { title: label, start_date: start, end_date: end, entries } });
+        imported = entries.length;
+      } else {
+        const result = await api(`/class-data/${cid()}/schedules/import`, { method: "POST", body: { entries: payload } });
+        imported = result.imported;
+      }
       closeModal();
       toast(`Imported ${imported} schedule entr${imported === 1 ? "y" : "ies"}.`);
       await renderPage();
@@ -557,11 +561,13 @@ async function renderNotes() {
     const stats = [`${reviews} reviewer${reviews === 1 ? "" : "s"}`];
     if (qz) stats.push(`${qz} ${qz === 1 ? "quiz" : "quizzes"}`);
     const accent = subjectAccent(s.name);
-    return `<div class="subject-card" style="--subject-accent:${accent}">${isAdmin() && state.selectMode.subjects ? `<input class="check select-item" type="checkbox" data-select-id="${s.id}" ${state.selected.subjects?.includes(s.id) ? "checked" : ""} aria-label="Select subject">` : ""}<button class="subject-open" data-action="open-subject" data-id="${s.id}"><h3><span class="subject-title"><span class="subject-dot" style="background:${accent}"></span><span class="subject-name">${escapeHtml(s.name)}</span></span></h3><p>${stats.join(" · ")}</p></button>${isAdmin() ? `<div><button class="small-link" data-action="edit-item" data-resource="subjects" data-id="${s.id}">Edit subject</button></div>` : ""}</div>`;
+    const selected = state.selected.subjects.includes(s.id);
+    const selectAttrs = isAdmin() ? `data-selectable="subjects" data-select-id="${s.id}"` : "";
+    return `<div class="subject-card${selected ? " is-selected" : ""}" style="--subject-accent:${accent}" ${selectAttrs}><button class="subject-open" data-action="open-subject" data-id="${s.id}"><h3><span class="subject-title"><span class="subject-dot" style="background:${accent}"></span><span class="subject-name">${escapeHtml(s.name)}</span></span></h3><p>${stats.join(" · ")}</p></button>${isAdmin() ? `<div><button class="small-link" data-action="edit-item" data-resource="subjects" data-id="${s.id}">Edit subject</button></div>` : ""}</div>`;
   }).join("");
   const unassigned = quizzes.filter((q) => !q.subject_id);
   return `${pageHead("Subjects",
-    `<div class="action-row notes-actions">${isAdmin() ? `<button class="secondary" data-action="toggle-select" data-resource="subjects">${state.selectMode.subjects ? "Cancel select" : "Select"}</button>${state.selectMode.subjects ? `<button class="small-link" data-action="select-all" data-resource="subjects">Select all</button><button class="danger-button" data-action="bulk-delete" data-resource="subjects" ${state.selected.subjects?.length ? "" : "disabled"}>Delete Selected (${state.selected.subjects?.length || 0})</button>` : ""}` : ""}<button class="secondary" data-action="ai-reviewer">✦ AI reviewer</button><button class="secondary" data-action="ai-quiz">✦ Build a quiz</button>${isAdmin() ? actionButton("＋ Add subject", "add-item", "subjects", true) : ""}</div>`)}
+    `<div class="action-row notes-actions"><button class="secondary" data-action="ai-reviewer">✦ AI reviewer</button><button class="secondary" data-action="ai-quiz">✦ Build a quiz</button>${isAdmin() ? actionButton("＋ Add subject", "add-item", "subjects", true) : ""}</div>`)}
   <div class="panel">
   ${subjects.length ? `<div class="subject-grid">${subjectCards}</div>` : emptyState("No subjects yet", "Admins can create subjects to organize reviewers.")}</div>
   ${unassigned.length ? `<div class="panel" style="margin-top:17px"><div class="section-title"><h3>Other quizzes</h3><span class="pill">${unassigned.length}</span></div>
@@ -573,7 +579,6 @@ async function renderAttendance() {
     api(`/attendance/${cid()}/sessions`),
     api(`/attendance/${cid()}/attendance/summary`).catch(() => null)
   ]);
-  state.cache.attendanceExport = { summary, sessionCount: sessions.length };
   const cards = sessions.map((s) => {
     const when = s.kind === "date"
       ? `One-off · ${escapeHtml(fmtShortDate(s.event_date))}`
@@ -583,7 +588,7 @@ async function renderAttendance() {
     return `<article class="item-card"><div class="class-avatar">☑</div><div class="item-main"><h3>${escapeHtml(s.name)}</h3><p>${when}${times}${subject}</p></div>
       <div class="inline-actions"><button class="secondary" data-att-take="${s.id}">${isAdmin() ? "Take" : "View"}</button>${isAdmin() ? `<button class="small-link" data-att-edit="${s.id}">Edit</button>` : ""}</div></article>`;
   }).join("");
-  const attendanceActions = `<div class="action-row attendance-actions"><button type="button" class="secondary" data-action="export-attendance-csv">Export CSV</button>${isAdmin() ? actionButton("＋ Add session", "add-attendance") : ""}</div>`;
+  const attendanceActions = `<div class="action-row attendance-actions">${isAdmin() ? actionButton("＋ Add session", "add-attendance") : ""}</div>`;
   return `${pageHead("Attendance", attendanceActions)}
   <div class="attendance-content-grid">
     ${attendanceSummaryPanel(summary, sessions.length)}
@@ -612,36 +617,11 @@ function attendanceSummaryPanel(summary, sessionCount = 0) {
     const abs = Number(s.absent ?? 0) || 0;
     const rate = r === null || Number.isNaN(r) ? "—" : `${r}%`;
     const rateTone = r === null || Number.isNaN(r) ? "muted" : r >= 90 ? "green" : r >= 75 ? "amber" : "red";
-    return `<tr><td>${escapeHtml(s.subject_name || "No subject")}</td><td>${att}</td><td>${abs}</td><td><span class="att-rate-badge ${rateTone}">${rate}</span></td></tr>`;
+    return `<tr><td>${escapeHtml(s.subject_name)}</td><td>${att}</td><td>${abs}</td><td><span class="att-rate-badge ${rateTone}">${rate}</span></td></tr>`;
   }).join("");
   const body = `<div class="att-summary-strip"><div><span>Sessions</span><strong>${Number(sessionCount) || 0}</strong></div><div><span>Present</span><strong class="green-t">${present}</strong></div><div><span>Absent</span><strong class="red-t">${absent}</strong></div></div>
     ${counted === 0 ? emptyState("No attendance recorded yet", "Once your teacher marks a session, your rate shows up here.") : rows ? `<div class="att-summary-table-wrap"><table class="att-summary-table"><thead><tr><th>Subject</th><th>Attended</th><th>Absent</th><th>Rate</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}`;
   return `<div class="panel att-panel-compact attendance-summary-panel" style="margin-bottom:17px"><div class="section-title"><h3>My attendance</h3><span class="pill ${tone}">${rate}</span></div>${body}</div>`;
-}
-
-function exportAttendanceCsv() {
-  const { summary, sessionCount = 0 } = state.cache.attendanceExport || {};
-  if (!summary) { toast("Attendance summary isn’t available yet."); return; }
-  const overall = summary.overall || {};
-  const csvRows = [["Scope", "Subject", "Total Sessions", "Attended", "Absent", "Rate"]];
-  csvRows.push(["Overall", "All subjects", overall.counted ?? ((overall.present || 0) + (overall.late || 0) + (overall.absent || 0)), (overall.attended ?? ((overall.present || 0) + (overall.late || 0))), overall.absent ?? 0, overall.rate == null ? "" : `${overall.rate}%`]);
-  (summary.subjects || []).forEach((subject) => csvRows.push([
-    "Subject", subject.subject_name || "No subject", subject.counted ?? ((subject.attended || 0) + (subject.absent || 0)), subject.attended ?? 0, subject.absent ?? 0, subject.rate == null ? "" : `${subject.rate}%`
-  ]));
-  // Include the number of configured sessions as a metadata row without conflating it with recorded attendance.
-  csvRows.push(["Schedule", "Configured sessions", sessionCount, "", "", ""]);
-  const csv = csvRows.map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
-  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const className = String(state.activeClass?.name || "class").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "class";
-  link.href = url;
-  link.download = `attendance-${className}-${localDateStr()}.csv`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast("Attendance CSV exported.");
 }
 
 /* ---------- modal + forms ---------- */
@@ -668,8 +648,8 @@ function closeModal() {
 // AI study dialogs need more room than a plain form.
 function openWideModal(title, eyebrow, html) {
   const modal = $("#modal");
-  if (modal) modal.classList.add("wide");
   openModal(title, eyebrow, html);
+  if (modal) modal.classList.add("wide");
 }
 
 // onSubmit / onDelete may return a function: it runs after the dialog closes (e.g. to re-open the parent dialog).
@@ -962,10 +942,11 @@ async function openItemForm(resource, item = null, prefill = null) {
     html = `${field("Task title", "title", "e.g. Module 3 activity", "text", data.title || "", 'required maxlength="180"')}<label>Description<textarea name="description" maxlength="5000" placeholder="Instructions or details">${escapeHtml(data.description || "")}</textarea></label>${subjectSelect(subjects, data.subject_id || "")}
     <div class="two-col">${field("Due date & time", "due_at", "", "datetime-local", toLocalInput(data.due_at))}<label>Priority<select name="priority">${["low", "normal", "high"].map((p) => `<option value="${p}" ${(data.priority || "normal") === p ? "selected" : ""}>${p[0].toUpperCase() + p.slice(1)}</option>`).join("")}</select></label></div>${repeatField}${privateField}`;
   }
+  const dateToday = localDateStr(new Date());
   if (resource === "schedules") html = `${field("Schedule title", "title", "e.g. Object-Oriented Programming", "text", data.title || "", 'required maxlength="160"')}${subjectSelect(subjects, data.subject_id || "")}
     <label>Day<select name="day_of_week">${days.map((d, i) => `<option value="${i}" ${Number(data.day_of_week ?? new Date().getDay()) === i ? "selected" : ""}>${d}</option>`).join("")}</select></label>
     <div class="two-col">${field("Start time", "start_time", "", "time", (data.start_time || "08:00").slice(0, 5), 'required step="900"')}${field("End time", "end_time", "", "time", (data.end_time || "09:00").slice(0, 5), 'required step="900"')}</div>
-    <p class="hint" id="duration-hint"></p>${field("Room", "room", "e.g. Lab 2", "text", data.room || "", 'maxlength="100"')}`;
+    <p class="hint" id="duration-hint"></p>${field("Room", "room", "e.g. Lab 2", "text", data.room || "", 'maxlength="100"')}${!edit ? `<label class="check-row"><input type="checkbox" name="temporary" id="schedule-temporary"> Temporary schedule</label><div id="schedule-temporary-fields" hidden>${field("Schedule label", "temporary_title", "e.g. Exam Week", "text", "", 'maxlength="120"')}<div class="two-col">${field("Start date", "start_date", "", "date", dateToday)}${field("End date", "end_date", "", "date", dateToday)}</div>${field("Entry date", "entry_date", "", "date", dateToday)}</div>` : ""}`;
 
   const form = modalForm({
     title: (edit ? "Edit " : "Add ") + resourceLabels[resource],
@@ -974,6 +955,14 @@ async function openItemForm(resource, item = null, prefill = null) {
       if (resource === "schedules") {
         d.day_of_week = Number(d.day_of_week);
         if (toMinutes(d.end_time) <= toMinutes(d.start_time)) throw new Error("End time must be later than start time.");
+        if (d.temporary) {
+          if (!d.temporary_title || !d.start_date || !d.end_date || !d.entry_date) throw new Error("Fill in the temporary schedule label and dates.");
+          if (d.end_date < d.start_date || d.entry_date < d.start_date || d.entry_date > d.end_date) throw new Error("Entry date must fall within the temporary schedule dates.");
+          const subject = subjects.find((item) => item.id === d.subject_id)?.name || "";
+          await api(`/class-data/${cid()}/temporary-schedules`, { method: "POST", body: { title: d.temporary_title, start_date: d.start_date, end_date: d.end_date, entries: [{ title: d.title, subject, entry_date: d.entry_date, start_time: d.start_time, end_time: d.end_time, room: d.room }] } });
+          toast("Temporary schedule saved.");
+          return;
+        }
       }
       if (resource === "tasks") {
         const dt = d.due_at ? new Date(d.due_at) : null;
@@ -998,7 +987,11 @@ async function openItemForm(resource, item = null, prefill = null) {
     } : undefined,
     deleteLabel: resource === "subjects" ? "Delete subject and its topics" : "Delete"
   });
-  if (resource === "schedules") wireTimePicker(form);
+  if (resource === "schedules") {
+    wireTimePicker(form);
+    const toggle = $("#schedule-temporary", form);
+    if (toggle) toggle.onchange = () => { $("#schedule-temporary-fields", form).hidden = !toggle.checked; };
+  }
 }
 // Moving the start time keeps the same duration; the hint shows the duration or the validation problem.
 function wireTimePicker(form) {
@@ -1235,6 +1228,7 @@ function quizCard(q) {
 async function openSubject(subjectId, tab = "reviewers") {
   const subject = state.cache.subjects?.find((s) => s.id === subjectId);
   const subjectName = subject?.name || "Subject";
+  openWideModal(subjectName, "SUBJECT", '<div class="modal-skeleton" aria-label="Loading subject"><span class="skeleton-line"></span><span class="skeleton-line"></span><span class="skeleton-line"></span></div>');
   const [{ reviewers }, { quizzes }, tasks] = await Promise.all([
     api(`/class-data/${cid()}/subjects/${subjectId}/reviewers`),
     api(`/ai/${cid()}/quizzes`),
@@ -1291,7 +1285,7 @@ async function openSubject(subjectId, tab = "reviewers") {
   $$("[data-reviewer-open]", body).forEach((card) => card.addEventListener("click", (e) => {
     if (e.target.closest("[data-reviewer-action]")) return;
     const r = reviewers.find((x) => `${x.kind}:${x.id}` === card.dataset.reviewerOpen);
-    if (r) openReviewer(r, subjectId, subjectName);
+    if (r) openReviewer(r, subjectId, subjectName, reviewers);
   }));
   $$("[data-note-delete]", body).forEach((b) => b.addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -1311,7 +1305,7 @@ async function openSubject(subjectId, tab = "reviewers") {
 }
 
 // A reviewer opens as its own reading view, with copy / download for studying offline.
-function openReviewer(r, subjectId, subjectName) {
+function openReviewer(r, subjectId, subjectName, reviewers = []) {
   const canEdit = r.kind === "note" && isAdmin();
   const fileButton = r.file_name
     ? `<button type="button" class="secondary" id="reviewer-file" data-name="${escapeHtml(r.file_name)}">⇩ ${escapeHtml(r.file_name)}</button>`
@@ -1322,7 +1316,6 @@ function openReviewer(r, subjectId, subjectName) {
     <div class="modal-actions reviewer-actions">
       <button type="button" class="secondary" id="reviewer-back">← Back</button>
       ${r.content ? `<button type="button" class="secondary" id="reviewer-copy">Copy text</button>` : ""}
-      ${r.content ? `<button type="button" class="secondary" id="reviewer-download">⇩ .md</button>` : ""}
       ${canEdit ? `<button type="button" class="secondary" id="reviewer-edit">Edit</button>` : ""}
       ${fileButton}
     </div>`);
@@ -1330,18 +1323,10 @@ function openReviewer(r, subjectId, subjectName) {
   $("#reviewer-copy")?.addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(r.content); toast("Reviewer copied."); } catch { toast("Couldn't copy automatically."); }
   });
-  $("#reviewer-download")?.addEventListener("click", () => downloadText(`${r.title}.md`, r.content));
   $("#reviewer-file")?.addEventListener("click", (e) => downloadUpload(r.id, e.currentTarget.dataset.name).catch((err) => toast(err.message)));
   $("#reviewer-edit")?.addEventListener("click", () => openNoteEditor(r, subjectId, subjectName));
-}
-
-function downloadText(filename, text) {
-  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url; link.download = filename.replace(/[\\/:*?"<>|]+/g, "-").slice(0, 120) || "reviewer.md";
-  document.body.appendChild(link); link.click(); link.remove();
-  URL.revokeObjectURL(url);
+  const at = reviewers.findIndex((item) => item.kind === r.kind && item.id === r.id);
+  wireSwipe($("#modal-body"), () => { if (at >= 0 && at < reviewers.length - 1) openReviewer(reviewers[at + 1], subjectId, subjectName, reviewers); }, () => { if (at > 0) openReviewer(reviewers[at - 1], subjectId, subjectName, reviewers); });
 }
 
 // Everyone can add a reviewer: admins create a class note, students keep it as their own note.
@@ -1463,50 +1448,56 @@ function showReviewerPreview(reviewer, meta) {
 
 /* ---- build a quiz from the reviewers of one or more subjects ---- */
 async function openQuizBuilder(prefill = {}) {
-  const [subjects, { summary }] = await Promise.all([fetchResource("subjects"), api(`/class-data/${cid()}/reviewer-summary`)]);
-  const preselect = new Set(prefill.subjectIds || []);
-  const subjectRows = subjects.map((s) => `<label class="topic-check"><input type="checkbox" data-quiz-subject value="${s.id}" ${preselect.has(s.id) ? "checked" : ""}><span class="topic-name">${escapeHtml(s.name)}</span><span class="muted topic-count">${summary[s.id] || 0} reviewer(s)</span></label>`).join("");
-  openWideModal("Build a quiz", "AI QUIZ", `
-    <p class="muted">Choose a subject, then select the topics or reviewers the quiz should cover.</p><div class="ai-form">
-      <div class="inline-actions"><button type="button" class="small-link" id="qz-all-subjects">Select all subjects</button><button type="button" class="small-link" id="qz-none-subjects">Clear subjects</button></div>
-      <div class="topic-picker" id="qz-subjects">${subjectRows || emptyState("No subjects yet", "Create a subject and add reviewers first.")}</div>
-      <div class="inline-actions"><strong>Topics / reviewers</strong><button type="button" class="small-link" id="qz-all-reviewers">Select all</button><button type="button" class="small-link" id="qz-none-reviewers">Deselect all</button></div>
-      <div class="topic-picker" id="qz-reviewers"><p class="muted">Select one or more subjects to load their reviewers.</p></div>
-      <div class="two-col"><label>Questions<input type="number" id="qz-count" min="3" max="20" value="5"></label><label>Difficulty<select id="qz-difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label></div>
-      <p class="form-error" id="qz-error"></p><div class="modal-actions"><button type="button" class="secondary" id="qz-cancel">Cancel</button><button type="button" class="primary" id="qz-go">✦ Generate quiz</button></div></div>`);
-  const loadReviewers = async () => {
-    const ids = $$("[data-quiz-subject]:checked", $("#modal-body")).map((x) => x.value);
-    const target = $("#qz-reviewers");
-    if (!ids.length) { target.innerHTML = '<p class="muted">Select one or more subjects to load their reviewers.</p>'; return; }
-    target.innerHTML = '<p class="muted">Loading reviewers…</p>';
-    try {
-      const all = await Promise.all(ids.map(async (id) => {
-        const [notes, uploads, topics] = await Promise.all([api(`/class-data/${cid()}/subjects/${id}/notes`), api(`/uploads/${cid()}?subject_id=${id}`), api(`/class-data/${cid()}/subjects/${id}/topics`)]);
-        return [...(topics.topics || []).map((x) => ({ ...x, kind: "Topic", selection: "topic" })), ...(notes.notes || []).map((x) => ({ ...x, kind: "Reviewer", selection: "reviewer" })), ...(uploads.uploads || []).map((x) => ({ ...x, kind: "Upload", selection: "reviewer" }))].map((x) => ({ ...x, subject_id: id }));
-      }));
-      const reviewers = all.flat();
-      target.innerHTML = reviewers.length ? reviewers.map((r) => `<label class="topic-check"><input type="checkbox" data-quiz-${r.selection} value="${r.id}" checked><span class="topic-name">${escapeHtml(r.title)}</span><span class="muted topic-count">${escapeHtml(r.kind)}</span></label>`).join("") : '<p class="muted">These subjects have no reviewers yet.</p>';
-    } catch (error) { target.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`; }
-  };
-  $("#qz-subjects").addEventListener("change", loadReviewers);
-  if (preselect.size) await loadReviewers();
-  $("#qz-all-subjects").onclick = () => { $$('[data-quiz-subject]', $("#modal-body")).forEach((x) => x.checked = true); loadReviewers(); };
-  $("#qz-none-subjects").onclick = () => { $$('[data-quiz-subject]', $("#modal-body")).forEach((x) => x.checked = false); loadReviewers(); };
-  $("#qz-all-reviewers").onclick = () => $$('[data-quiz-reviewer],[data-quiz-topic]', $("#modal-body")).forEach((x) => x.checked = true);
-  $("#qz-none-reviewers").onclick = () => $$('[data-quiz-reviewer],[data-quiz-topic]', $("#modal-body")).forEach((x) => x.checked = false);
-  $("#qz-cancel").onclick = () => { closeModal(); const only = prefill.subjectIds?.length === 1 ? prefill.subjectIds[0] : null; if (only) openSubject(only, "quizzes").catch(() => {}); };
-  $("#qz-go").onclick = async () => {
-    const subjectIds = $$('[data-quiz-subject]:checked', $("#modal-body")).map((x) => x.value);
-    const reviewerIds = $$('[data-quiz-reviewer]:checked', $("#modal-body")).map((x) => x.value);
-    const topicIds = $$('[data-quiz-topic]:checked', $("#modal-body")).map((x) => x.value);
-    if (!subjectIds.length) return $("#qz-error").textContent = "Select at least one subject.";
-    if (!reviewerIds.length && !topicIds.length) return $("#qz-error").textContent = "Select at least one topic or reviewer.";
-    const button = $("#qz-go"); button.disabled = true; button.textContent = "✦ Writing questions…";
-    try {
-      const { quiz } = await api(`/ai/${cid()}/quizzes/generate`, { method: "POST", body: { subject_ids: subjectIds, reviewer_ids: reviewerIds, topic_ids: topicIds, count: Number($("#qz-count").value), difficulty: $("#qz-difficulty").value } });
-      trackEvent("ai_used", { tool: "quiz" }); showQuizPreview(quiz, { subjectIds, subjectName: subjectIds.length === 1 ? subjects.find((s) => s.id === subjectIds[0])?.name : null });
-    } catch (error) { $("#qz-error").textContent = error.message; button.disabled = false; button.textContent = "✦ Generate quiz"; }
-  };
+  openWideModal("Build a Quiz", "REVIEWERS", '<div class="modal-skeleton" aria-label="Loading reviewers"><span class="skeleton-line"></span><span class="skeleton-line"></span><span class="skeleton-line"></span></div>');
+  try {
+    const subjects = await fetchResource("subjects");
+    const tree = await Promise.all(subjects.map(async (subject) => {
+      const [notes, uploads] = await Promise.all([
+        api(`/class-data/${cid()}/subjects/${subject.id}/notes`),
+        api(`/uploads/${cid()}?subject_id=${subject.id}`)
+      ]);
+      return { subject, reviewers: [...(notes.notes || []), ...(uploads.uploads || [])] };
+    }));
+    const preselected = new Set(prefill.reviewerIds || []);
+    const html = tree.map(({ subject, reviewers }) => `<section class="reviewer-tree-folder" data-folder="${subject.id}">
+      <div class="folder-row"><button type="button" data-folder-toggle="${subject.id}" aria-expanded="false" aria-label="Expand ${escapeHtml(subject.name)}">▸</button><span aria-hidden="true">📁</span><input type="checkbox" data-folder-check="${subject.id}" ${reviewers.length ? "" : "disabled"}><span class="topic-name">${escapeHtml(subject.name)}</span></div>
+      <div class="reviewer-tree-children" data-folder-children="${subject.id}" hidden>${reviewers.map((reviewer) => `<label class="reviewer-tree-row"><input type="checkbox" data-reviewer-check value="${reviewer.id}" data-subject="${subject.id}" ${!preselected.size || preselected.has(reviewer.id) ? "checked" : ""}><span>${escapeHtml(reviewer.title)}</span></label>`).join("") || '<p class="muted">No reviewers in this subject.</p>'}</div>
+    </section>`).join("");
+    openWideModal("Build a Quiz", "REVIEWERS", `<p class="muted">Choose the reviewers to include in your quiz.</p><div class="inline-actions reviewer-tree-tools"><button type="button" class="small-link" id="reviewers-select-all">Select all</button><button type="button" class="small-link" id="reviewers-deselect-all">Deselect all</button></div>
+      <div class="folder-tree" id="reviewer-tree">${html || emptyState("No subjects yet", "Create a subject and add reviewers first.")}</div>
+      <div class="ai-form"><div class="two-col"><label>Questions<input type="number" id="qz-count" min="3" max="20" value="5"></label><label>Difficulty<select id="qz-difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label></div><p class="form-error" id="qz-error"></p><div class="modal-actions"><button type="button" class="secondary" id="qz-cancel">Cancel</button><button type="button" class="primary" id="qz-go">✦ Generate quiz</button></div></div>`);
+    const body = $("#modal-body");
+    const updateFolder = (id) => {
+      const children = $$(`[data-folder-children="${id}"] [data-reviewer-check]`, body);
+      const folderCheck = $(`[data-folder-check="${id}"]`, body);
+      const checked = children.filter((x) => x.checked).length;
+      folderCheck.checked = children.length > 0 && checked === children.length;
+      folderCheck.indeterminate = checked > 0 && checked < children.length;
+    };
+    tree.forEach(({ subject, reviewers }) => {
+      const folder = subject.id;
+      const disclosure = $(`[data-folder-toggle="${folder}"]`, body);
+      const children = $(`[data-folder-children="${folder}"]`, body);
+      disclosure.onclick = () => { const open = children.hidden; children.hidden = !open; disclosure.textContent = open ? "▾" : "▸"; disclosure.setAttribute("aria-expanded", String(open)); };
+      $(`[data-folder-check="${folder}"]`, body).onchange = (event) => { $$(`[data-folder-children="${folder}"] [data-reviewer-check]`, body).forEach((x) => x.checked = event.target.checked); updateFolder(folder); };
+      $$(`[data-folder-children="${folder}"] [data-reviewer-check]`, body).forEach((x) => x.onchange = () => updateFolder(folder));
+      updateFolder(folder);
+    });
+    $("#reviewers-select-all").onclick = () => { $$('[data-reviewer-check]', body).forEach((x) => x.checked = true); tree.forEach(({ subject }) => updateFolder(subject.id)); };
+    $("#reviewers-deselect-all").onclick = () => { $$('[data-reviewer-check]', body).forEach((x) => x.checked = false); tree.forEach(({ subject }) => updateFolder(subject.id)); };
+    $("#qz-cancel").onclick = () => { closeModal(); const only = prefill.subjectIds?.length === 1 ? prefill.subjectIds[0] : null; if (only) openSubject(only, "quizzes").catch((e) => toast(e.message)); };
+    $("#qz-go").onclick = async () => {
+      const reviewerIds = $$('[data-reviewer-check]:checked', body).map((x) => x.value);
+      const subjectIds = [...new Set($$('[data-reviewer-check]:checked', body).map((x) => x.dataset.subject))];
+      if (!reviewerIds.length) return $("#qz-error").textContent = "Select at least one reviewer.";
+      const button = $("#qz-go"); button.disabled = true; button.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Writing questions…';
+      try {
+        const { quiz } = await api(`/ai/${cid()}/quizzes/generate`, { method: "POST", body: { subject_ids: subjectIds, reviewer_ids: reviewerIds, count: Number($("#qz-count").value), difficulty: $("#qz-difficulty").value } });
+        trackEvent("ai_used", { tool: "quiz" });
+        showQuizPreview(quiz, { subjectIds, reviewerIds, subjectName: subjectIds.length === 1 ? tree.find((x) => x.subject.id === subjectIds[0])?.subject.name : null });
+      } catch (error) { $("#qz-error").textContent = error.message; button.disabled = false; button.textContent = "✦ Generate quiz"; }
+    };
+  } catch (error) { openWideModal("Build a Quiz", "REVIEWERS", `<p class="form-error">${escapeHtml(error.message)}</p><button type="button" class="secondary" id="qz-load-close">Close</button>`); $("#qz-load-close").onclick = closeModal; }
 }
 
 function showQuizPreview(quiz, meta) {
@@ -1520,7 +1511,7 @@ function showQuizPreview(quiz, meta) {
       <p class="form-error" id="qz-error"></p>
       <div class="modal-actions"><button type="button" class="secondary" id="qz-back">← Back</button><button type="button" class="primary" id="qz-save">Save quiz</button></div>
     </div>`);
-  $("#qz-back").onclick = () => openQuizBuilder({ subjectIds: meta.subjectIds, subjectName: meta.subjectName });
+  $("#qz-back").onclick = () => openQuizBuilder({ subjectIds: meta.subjectIds, reviewerIds: meta.reviewerIds, subjectName: meta.subjectName });
   $("#qz-save").onclick = async () => {
     const keep = $$("[data-keep]", $("#modal-body")).filter((c) => c.checked).map((c) => Number(c.dataset.keep));
     const questions = keep.map((i) => quiz.questions[i]);
@@ -1538,6 +1529,7 @@ function showQuizPreview(quiz, meta) {
 
 /* ---- take a saved quiz ---- */
 async function openQuiz(quizId) {
+  openWideModal("Loading quiz", "AI QUIZ", '<div class="modal-skeleton" aria-label="Loading quiz"><span class="skeleton-line"></span><span class="skeleton-line"></span><span class="skeleton-line"></span></div>');
   const { quiz, attempts } = await api(`/ai/${cid()}/quizzes/${quizId}`);
   const dueIndices = new Set((quiz.due_question_indices || []).map(Number));
   quiz.questions = (quiz.questions || []).map((question, sourceIndex) => ({ ...question, source_index: sourceIndex }))
@@ -1595,9 +1587,16 @@ function runQuiz(quiz) {
         </fieldset></div><p class="form-error" id="qz-error"></p>
         <div class="modal-actions"><button type="button" class="secondary" id="qz-quit">Quit</button>${index ? '<button type="button" class="secondary" id="qz-prev">Previous</button>' : ''}${atLast ? '<button type="submit" class="primary">Submit Quiz</button>' : '<button type="button" class="primary" id="qz-next">Next</button>'}</div></form>`);
     const form = $("#quiz-run");
+    const move = (direction) => {
+      const picked = $("input[name=q" + index + "]:checked", form);
+      if (picked) answers[index] = Number(picked.value);
+      if (index + direction < 0 || index + direction >= quiz.questions.length) return;
+      index += direction; render();
+    };
     $("#qz-quit").onclick = () => closeModal();
-    if (index) $("#qz-prev").onclick = () => { const picked = $("input[name=q" + index + "]:checked", form); if (picked) answers[index] = Number(picked.value); index--; render(); };
-    if (!atLast) $("#qz-next").onclick = () => { const picked = $("input[name=q" + index + "]:checked", form); if (picked) answers[index] = Number(picked.value); index++; render(); };
+    if (index) $("#qz-prev").onclick = () => move(-1);
+    if (!atLast) $("#qz-next").onclick = () => move(1);
+    wireSwipe(form, () => move(1), () => move(-1));
     form.onsubmit = async (e) => {
       e.preventDefault();
       const picked = $("input[name=q" + index + "]:checked", form); if (picked) answers[index] = Number(picked.value);
@@ -1795,12 +1794,11 @@ async function showMembers() {
   const me = state.user.id;
   const rows = members.map((m) => {
     const others = me !== m.id && m.role !== "owner";
+    const ownerActions = isOwner() && me === m.id && members.some((member) => member.id !== me) ? `<button class="small-link owner-transfer" data-open-transfer>Transfer ownership</button>` : "";
     return `<tr><td>${avatarHtml({ fullName: m.full_name || m.username, username: m.username, avatar_url: m.avatar_url }, "avatar-sm")}${escapeHtml(m.full_name)}${me === m.id ? " (you)" : ""}<br><small>@${escapeHtml(m.username)}</small></td><td><span class="pill">${escapeHtml(m.role)}</span></td>
-      <td><div class="member-actions">${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
+      <td><div class="member-actions">${ownerActions}${others && isOwner() ? `<button class="small-link" data-member-role="${m.id}" data-role="${m.role === "admin" ? "student" : "admin"}">${m.role === "admin" ? "Demote" : "Make admin"}</button>` : ""}${others && isAdmin() && !(state.activeClass.role === "admin" && m.role === "admin") ? `<button class="small-link link-danger" data-member-remove="${m.id}">Remove</button>` : ""}</div></td></tr>`;
   }).join("");
-  const others = members.filter((m) => m.id !== me);
-  const transfer = isOwner() && others.length ? `<hr><p class="hint"><strong>Transfer ownership</strong> — hand this class to another member. You’ll become an admin.</p><div class="inline-actions"><select id="transfer-target" style="max-width:240px">${others.map((m) => `<option value="${m.id}">${escapeHtml(m.full_name || m.username)}</option>`).join("")}</select><button class="secondary" id="transfer-btn">Transfer</button></div>` : "";
-  openModal("Class members", "CLASS SETTINGS", `<div class="table-wrap"><table class="members-table"><thead><tr><th>Member</th><th>Role</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${transfer}`);
+  openModal("Class members", "CLASS SETTINGS", `<div class="table-wrap"><table class="members-table"><thead><tr><th>Member</th><th>Role</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`);
   $$("[data-member-role]").forEach((b) => b.onclick = async () => {
     try { await api(`/classes/${cid()}/members/${b.dataset.memberRole}/role`, { method: "PATCH", body: { role: b.dataset.role } }); toast("Role updated."); await showMembers(); } catch (e) { toast(e.message); }
   });
@@ -1808,18 +1806,19 @@ async function showMembers() {
     if (!confirm("Remove this member from the class?")) return;
     try { await api(`/classes/${cid()}/members/${b.dataset.memberRemove}`, { method: "DELETE" }); toast("Member removed."); await showMembers(); } catch (e) { toast(e.message); }
   });
-  const transferBtn = $("#transfer-btn");
-  if (transferBtn) transferBtn.onclick = async () => {
-    const userId = $("#transfer-target").value;
-    if (!userId) return;
-    if (!confirm("Transfer ownership of this class? You will become an admin.")) return;
-    try {
-      await api(`/classes/${cid()}/owner`, { method: "PATCH", body: { userId } });
-      closeModal();
-      toast("Ownership transferred.");
-      await loadClasses();
-      await renderPage();
-    } catch (e) { toast(e.message); }
+  $$('[data-open-transfer]').forEach((button) => button.onclick = () => openTransferOwnership(members.filter((member) => member.id !== me)));
+}
+
+function openTransferOwnership(members) {
+  openModal("Transfer ownership", "CLASS SETTINGS", `<p class="muted">Choose the new owner. You’ll become an admin after the transfer.</p>
+    <label>New owner<select id="transfer-target">${members.map((m) => `<option value="${m.id}">${escapeHtml(m.full_name || m.username)} · ${escapeHtml(m.role)}</option>`).join("")}</select></label>
+    <label class="check-row"><input type="checkbox" id="transfer-confirm"> I confirm this ownership transfer.</label>
+    <p class="form-error" id="transfer-error"></p><div class="modal-actions"><button class="secondary" id="transfer-cancel" type="button">Cancel</button><button class="primary" id="transfer-btn" type="button" disabled>Transfer ownership</button></div>`);
+  $("#transfer-cancel").onclick = () => showMembers().catch((e) => toast(e.message));
+  $("#transfer-confirm").onchange = (event) => { $("#transfer-btn").disabled = !event.target.checked; };
+  $("#transfer-btn").onclick = async () => {
+    try { await api(`/classes/${cid()}/owner`, { method: "PATCH", body: { userId: $("#transfer-target").value } }); closeModal(); toast("Ownership transferred."); await loadClasses(); await renderPage(); }
+    catch (e) { $("#transfer-error").textContent = e.message; }
   };
 }
 
@@ -1873,16 +1872,8 @@ async function handleAction(action, el) {
   if (action === "open-subject") return openSubject(id);
   if (action === "add-item") return openItemForm(resource);
   if (action === "scan-schedule") return openScheduleScan();
-  if (action === "add-temp-schedule") return createTemporarySchedule();
   if (action === "toggle-schedule-edit") { state.scheduleEdit = !state.scheduleEdit; return renderPage(); }
-  if (action === "toggle-select") { state.selectMode[resource] = !state.selectMode[resource]; state.selected[resource] = []; return renderPage(); }
-  if (action === "select-all") { const rows = await fetchResource(resource); state.selected[resource] = rows.filter((x) => resource !== "tasks" || !x.is_private).map((x) => x.id); return renderPage(); }
-  if (action === "bulk-delete") {
-    const ids = state.selected[resource] || [];
-    if (!ids.length || !confirm(`Delete ${ids.length} selected ${resource}? This can’t be undone.`)) return;
-    const result = await api(`/class-data/${cid()}/${resource}/bulk-delete`, { method: "POST", body: { ids } });
-    state.selected[resource] = []; state.selectMode[resource] = false; toast(`Deleted ${result.deleted} ${resource}.`); return renderPage();
-  }
+  if (action === "toggle-task-edit") { state.taskEditMode = !state.taskEditMode; return renderPage(); }
   if (action === "ai-reviewer") return openReviewerGenerator();
   if (action === "ai-quiz") return openQuizBuilder();
   if (action === "study-plan") return openStudyPlan();
@@ -1890,8 +1881,8 @@ async function handleAction(action, el) {
   if (action === "ai-back") { state.page = state.prevPage || "overview"; return renderPage(); }
   if (action === "add-upload") return openUploadForm();
   if (action === "add-attendance") return openAttendanceForm();
-  if (action === "export-attendance-csv") return exportAttendanceCsv();
   if (action === "edit-item") {
+    openModal("Loading item", "CLASSLIE", '<div class="modal-skeleton" aria-label="Loading item"><span class="skeleton-line"></span><span class="skeleton-line"></span></div>');
     const rows = await fetchResource(resource);
     const item = rows.find((x) => x.id === id);
     if (!item) throw new Error("That item no longer exists.");
@@ -1916,22 +1907,98 @@ async function handleAction(action, el) {
     return renderPage();
   }
 }
+let selectionHoldTimer = null;
+let selectionHoldTarget = null;
+let selectionHoldStart = null;
+let suppressSelectionClick = null;
+function selectedTotal() { return state.selected.subjects.length + state.selected.tasks.length; }
+function syncSelectionBar() {
+  const bar = $("#selection-bar"); if (!bar) return;
+  const count = selectedTotal();
+  bar.classList.toggle("visible", count > 0);
+  bar.setAttribute("aria-hidden", String(count === 0));
+  $("#selection-count").textContent = `${count} selected`;
+  $("#selection-delete").onclick = async () => {
+    if (!count || !confirm(`Delete ${count} selected item${count === 1 ? "" : "s"}? This can’t be undone.`)) return;
+    try {
+      for (const resource of ["subjects", "tasks"]) {
+        const ids = state.selected[resource];
+        if (ids.length) await api(`/class-data/${cid()}/${resource}/bulk-delete`, { method: "POST", body: { ids } });
+      }
+      state.selected = { subjects: [], tasks: [] }; state.selectionActive = false;
+      toast(`Deleted ${count} item${count === 1 ? "" : "s"}.`); await renderPage();
+    } catch (error) { toast(error.message); }
+  };
+  $("#selection-cancel").onclick = () => { state.selected = { subjects: [], tasks: [] }; state.selectionActive = false; renderPage(); };
+}
+function cancelSelectionHold() { clearTimeout(selectionHoldTimer); selectionHoldTimer = null; selectionHoldTarget = null; selectionHoldStart = null; }
+function toggleSelectedItem(element) {
+  const kind = element.dataset.selectable, id = element.dataset.selectId;
+  if (!state.selected[kind]) state.selected[kind] = [];
+  state.selected[kind] = state.selected[kind].includes(id) ? state.selected[kind].filter((x) => x !== id) : [...state.selected[kind], id];
+  element.classList.toggle("is-selected", state.selected[kind].includes(id));
+  if (!selectedTotal()) state.selectionActive = false;
+  syncSelectionBar();
+}
+function wireLongPressSelection(root) {
+  if (!root || root.dataset.selectionBound) return;
+  root.dataset.selectionBound = "true";
+  root.addEventListener("pointerdown", (event) => {
+    const card = event.target.closest("[data-selectable]");
+    if (!card || !isAdmin() || event.button > 0 || event.target.closest("input,select,textarea")) return;
+    cancelSelectionHold(); selectionHoldTarget = card; selectionHoldStart = { x: event.clientX, y: event.clientY };
+    selectionHoldTimer = setTimeout(() => {
+      state.selectionActive = true;
+      if (!state.selected[card.dataset.selectable].includes(card.dataset.selectId)) state.selected[card.dataset.selectable].push(card.dataset.selectId);
+      card.classList.add("is-selected"); suppressSelectionClick = card.dataset.selectId;
+      syncSelectionBar(); selectionHoldTimer = null;
+    }, 450);
+  });
+  root.addEventListener("pointermove", (event) => {
+    if (!selectionHoldStart) return;
+    if (Math.hypot(event.clientX - selectionHoldStart.x, event.clientY - selectionHoldStart.y) > 10) cancelSelectionHold();
+  }, { passive: true });
+  root.addEventListener("pointerup", cancelSelectionHold);
+  root.addEventListener("pointercancel", cancelSelectionHold);
+  root.addEventListener("contextmenu", (event) => { if (event.target.closest("[data-selectable]") && (selectionHoldTimer || state.selectionActive)) event.preventDefault(); });
+  root.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-selectable]");
+    if (!card || !isAdmin() || event.target.closest(".task-toggle,[data-action=edit-item],[data-action=delete-item]")) return;
+    if (suppressSelectionClick === card.dataset.selectId) { suppressSelectionClick = null; event.preventDefault(); event.stopImmediatePropagation(); return; }
+    if (!state.selectionActive) return;
+    event.preventDefault(); event.stopImmediatePropagation(); toggleSelectedItem(card);
+  }, true);
+}
+function wireSwipe(element, onLeft, onRight) {
+  if (!element) return;
+  element.classList.add("swipe-surface");
+  let start = null;
+  element.addEventListener("pointerdown", (event) => { start = { x: event.clientX, y: event.clientY }; }, { passive: true });
+  element.addEventListener("pointerup", (event) => {
+    if (!start) return;
+    const dx = event.clientX - start.x, dy = event.clientY - start.y; start = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3) (dx < 0 ? onLeft : onRight)();
+  }, { passive: true });
+  element.addEventListener("pointercancel", () => { start = null; });
+}
+function shiftTaskFilter(direction) {
+  const filters = ["all", "todo", "done", "overdue"];
+  state.tasksFilter = filters[(filters.indexOf(state.tasksFilter) + direction + filters.length) % filters.length];
+  savePrefs({ tasksFilter: state.tasksFilter }); renderPage();
+}
+
 function bindPageEvents() {
   const root = $("#page-content");
+  wireLongPressSelection(root);
   $$("[data-action]", root).forEach((el) => el.addEventListener("click", async (event) => {
     if (el.dataset.action.startsWith("cal-")) event.preventDefault();
     try { await withButtonLoading(el, () => handleAction(el.dataset.action, el)); } catch (e) { toast(e.message); }
   }));
   $$("[data-page-link]", root).forEach((el) => el.addEventListener("click", () => { state.page = el.dataset.pageLink; renderPage(); }));
   $$("[data-task-filter]", root).forEach((el) => el.addEventListener("click", () => { state.tasksFilter = el.dataset.taskFilter; savePrefs({ tasksFilter: state.tasksFilter }); renderPage(); }));
-  $$(".select-item", root).forEach((el) => el.addEventListener("change", () => {
-    const resource = state.page === "tasks" ? "tasks" : "subjects";
-    const selected = new Set(state.selected[resource] || []);
-    if (el.checked) selected.add(el.dataset.selectId); else selected.delete(el.dataset.selectId);
-    state.selected[resource] = [...selected]; renderPage();
-  }));
   const taskSort = $("[data-task-sort]", root);
   if (taskSort) taskSort.addEventListener("change", () => { state.taskSort = taskSort.value; savePrefs({ taskSort: state.taskSort }); renderPage(); });
+  if (state.page === "tasks") wireSwipe($(".tasks-list-panel", root), () => shiftTaskFilter(1), () => shiftTaskFilter(-1));
   $$("[data-cal-day]", root).forEach((el) => el.addEventListener("click", () => openCalDay(el.dataset.calDay).catch((e) => toast(e.message))));
   $$("[data-att-take]", root).forEach((el) => el.addEventListener("click", () => withButtonLoading(el, () => openTakeAttendance(el.dataset.attTake)).catch((e) => toast(e.message))));
   $$("[data-att-edit]", root).forEach((el) => el.addEventListener("click", async () => {
@@ -2246,6 +2313,7 @@ async function renderPage() {
       if (token !== renderToken) return;
       root.innerHTML = `<div class="page-enter">${html}</div>`;
       root.removeAttribute("aria-busy");
+      syncSelectionBar();
       if (state.page === "ai") paintAiChat();
     } catch (error) {
       if (token !== renderToken) return;

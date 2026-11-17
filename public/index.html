@@ -12,7 +12,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/logo.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/styles.css?v=165">
+  <link rel="stylesheet" href="/styles.css?v=166">
 </head>
 <body>
   <a class="skip-link" href="#page-content">Skip to content</a>
@@ -100,6 +100,11 @@
     <form method="dialog" class="modal-head"><div><p class="eyebrow" id="modal-eyebrow">CLASSLIE</p><h2 id="modal-title">Create something</h2></div><button class="icon-button" aria-label="Close">×</button></form>
     <div id="modal-body" class="modal-body"></div>
   </dialog>
-  <script src="/app.js?v=164" defer></script>
+  <div id="selection-bar" class="selection-bar" aria-live="polite" aria-hidden="true">
+    <span id="selection-count">0 selected</span>
+    <button type="button" class="danger-button" id="selection-delete">Delete</button>
+    <button type="button" class="icon-button selection-cancel" id="selection-cancel" aria-label="Cancel selection">×</button>
+  </div>
+  <script src="/app.js?v=165" defer></script>
 </body>
 </html>
